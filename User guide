@@ -1,0 +1,10 @@
+
+
+Make comparison between DMI ice maps and NERSC automatic classification
+python DMI_NERSC_Comparison.py YYYY-mm-dd YYYY-mm-dd /path_DMI/ /path_NERSC/ /path_statistics_images/
+
+Download NIC shapefile ice maps
+python NIC_download_script.py YYYY-mm-dd /path/to/store/data/
+
+Make comparison between NIC and NERSC classification
+python NIC_NERSC_Comparison.py YYYY-mm-dd YYYY-mm-dd /path_NIC/ /path_NERSC/ /path_statistics_images/
