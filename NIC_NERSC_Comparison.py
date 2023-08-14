@@ -3,7 +3,7 @@
 
 # # Import
 
-# In[1]:
+# In[6]:
 
 
 from cartopy.crs import NorthPolarStereo, LambertAzimuthalEqualArea, Globe
@@ -23,7 +23,7 @@ from netCDF4 import Dataset
 
 # # Functions
 
-# In[2]:
+# In[11]:
 
 
 def get_gdal_dataset(x_ul, nx, dx, y_ul, ny, dy, srs_proj4, dtype=gdal.GDT_Float32):
@@ -408,15 +408,18 @@ def nic_nersc_day(year, month, day, path_nic, path_nersc, path_stats):
     with Dataset(aut_files[0]) as ds:
         land_mask = ds['ice_type'][0].filled(0) == -1
 
+    # Make difference map
     diff_us_aut, res_aut, res_usnic, mask_common = is_difference (auto_mosaic, map_ice)
 
+    # Compute all statistiques
     data = compute_stats_us_aut (diff_us_aut, res_usnic, res_aut, mask_common)
 
-    filename = 'us_stats_23' + month + day
-
+    # write statistics in a file
+    filename = 'us_stats_' + year[2:4] + month + day
     write_stats_day(data, path_stats, filename)
 
-    image_render('2023', month, day, path_stats, diff_us_aut, res_usnic, res_aut, land_mask, mask_common)
+    # Render image of maps
+    image_render(year, month, day, path_stats, diff_us_aut, res_usnic, res_aut, land_mask, mask_common)
     
 
 def nic_nersc_comparison(start_date, end_date, path_nic, path_nersc, path_stats):
@@ -425,29 +428,30 @@ def nic_nersc_comparison(start_date, end_date, path_nic, path_nersc, path_stats)
         day = single_date.strftime("%d")
         month = single_date.strftime("%m")
         year = single_date.strftime("%Y")
+        path_nic_day = path_nic + 'Arctic_' + year + month + day + '/'
         
-        man_file = sorted(glob.glob(path_nic + 'ARCTIC' + year[2:4] + month + day + '.shp'))
+        man_file = sorted(glob.glob(path_nic_day + 'ARCTIC' + year[2:4] + month + day + '.shp'))
         if len(man_file) == 1:
-            nic_nersc_day(year, month, day, path_nic, path_nersc, path_stats)
+            nic_nersc_day(year, month, day, path_nic_day, path_nersc, path_stats)
         
-
-
-# In[10]:
-
-
-#start_date = date(2023, 1, 5)
-#end_date = date(2023, 1, 15)
-
-#path_m = '/home/malela/NIC/'
-#path_au = '/Data/sat/auxdata/ice_charts/NERSC/nrt.cmems-du.eu/Core/SEAICE_ARC_PHY_AUTO_L4_NRT_011_015/cmems_obs-si_arc_phy-icetype_nrt_L4-auto_P1D/'
-#path_s = '/home/malela/dl_test/'
-
-#nic_nersc_comparison(start_date, end_date, path_m, path_au, path_s)#
 
 
 # # Run
 
-# In[5]:
+# In[13]:
+
+
+#start_date = date(2023, 1, 1)
+#end_date = date(2023, 5, 31)
+
+#pf_man = '/home/malela/dl_test/NIC/'
+#pf_aut = '/Data/sat/auxdata/ice_charts/NERSC/nrt.cmems-du.eu/Core/SEAICE_ARC_PHY_AUTO_L4_NRT_011_015/cmems_obs-si_arc_phy-icetype_nrt_L4-auto_P1D/'
+#pf_stats = '/home/malela/data/nic_nersc/'
+
+#nic_nersc_comparison(start_date, end_date, pf_man, pf_aut, pf_stats)
+
+
+# In[6]:
 
 
 parser = argparse.ArgumentParser()
