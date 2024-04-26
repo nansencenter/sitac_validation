@@ -1,29 +1,18 @@
 #!/usr/bin/env python
-# coding: utf-8
+import matplotlib
+matplotlib.use('agg')
 
-# # Import
-
-# In[2]:
-
-
+import os
 import glob
 import argparse
-from datetime import date, datetime, timedelta
-from cartopy.crs import NorthPolarStereo, LambertAzimuthalEqualArea
-import cartopy.feature as cfeature
+from datetime import date, timedelta
+from cartopy.crs import NorthPolarStereo
 import matplotlib.pyplot as plt
-import matplotlib.image
 from netCDF4 import Dataset
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 import sklearn.metrics as skm
-#from PIL import Image
 from matplotlib.gridspec import GridSpec
-
-
-# # Functions
-
-# In[5]:
 
 
 def daterange(start_date, end_date):
@@ -47,28 +36,50 @@ def nc_ice_comparison(start_date, end_date, path_man, path_aut, path_stats):
             print('SKIP')
         else :
             daily_ice_comparison(day, month, year, path_man, path_aut, path_stats)
-            
-def daily_ice_comparison(day, month, year, path_man, path_aut, path_stats):
-    
+
+def read_man_xy(path_man, year, month, day):
     path_man = path_man + year + '/' + month + '/ice_conc_greenland_' + year + month + day + '*.nc'
-    path_aut = path_aut + year + '/' + month + '/s1_icetype_mosaic_'+ year + month + day + '0600.nc'
-    
     ifiles_manu = sorted(glob.glob(path_man))
     with Dataset(ifiles_manu[0]) as ds_man:
-        ds_man = Dataset(ifiles_manu[0])
         x_man = ds_man['xc'][:]
         y_man = ds_man['yc'][:]
-        grid_size = ds_man['ice_poly_id_grid'][0].shape
-        
+    return x_man, y_man, ifiles_manu
+
+def read_aut_netcdf(path_aut, year, month, day):
+    path_aut = path_aut + year + '/' + month + '/s1_icetype_mosaic_'+ year + month + day + '0600.nc'
     with Dataset(path_aut) as ds_auto:
         x_aut = ds_auto['xc'][:]
         y_aut = ds_auto['yc'][:]
         mask_aut = ds_auto['confidence'][0].filled(0) > 0
         ice_type = ds_auto['ice_type'][0].filled(0)
         confidence = ds_auto['confidence'][0].filled(0)
+    return x_aut, y_aut, mask_aut, ice_type, confidence
+
+def daily_ice_comparison(day, month, year, path_man, path_aut, path_stats):
+    ofile = f'{path_stats}/stats_{year}{month}{day}.npz'
+    if os.path.exists(ofile):
+        return
+    try:
+        x_man, y_man, ifiles_manu = read_man_xy(path_man, year, month, day)
+    except IndexError:
+        print('DATE ' + year + month + day + ' SKIPPED because MAN files not found' )
+        np.savez(ofile, none=None)
+        return
+    
+    try:
+        x_aut, y_aut, mask_aut, ice_type, confidence = read_aut_netcdf(path_aut, year, month, day)
+    except FileNotFoundError:
+        print('DATE ' + year + month + day + ' SKIPPED because AUT file not found' )
+        np.savez(ofile, none=None)
+        return
 
     print('making mosaic')
-    mosaic, mask_mosaic = make_mosaic (ifiles_manu, grid_size)
+    try:
+        mosaic, mask_mosaic = make_mosaic(ifiles_manu, (y_man.size, x_man.size))
+    except IndexError:
+        print('DATE ' + year + month + day + ' SKIPPED because error reading MAN files' )
+        np.savez(ofile, none=None)
+        return
     
     print('reprojecting')
     mosaic_inter, mask_mosaic_inter = reproject(mosaic, mask_mosaic, y_man, x_man, x_aut, y_aut)
@@ -79,15 +90,17 @@ def daily_ice_comparison(day, month, year, path_man, path_aut, path_stats):
     intersec = np.count_nonzero(mask_diff == 1)
     if intersec == 0 :
         print('DATE ' + year + month + day + ' SKIPPED' )
-    else :
-        print('Statistics') 
-        data = compute_stats_all (man2aut, res_man, res_aut, mask_diff, confidence)
-        
-        print('writing data')
-        write_stats_day(data, path_stats + 'stats_m_', year + month + day)
-        
-        print('saving images')
-        image_render(year, month, day, path_stats, man2aut, res_man, res_aut, land_mask, mask_diff)
+        np.savez(ofile, none=None)
+        return
+    print('Statistics') 
+    result = compute_stats_all(man2aut, res_man, res_aut, mask_diff, confidence)
+    
+    print('writing data')
+    np.savez(ofile, **result)
+    #write_stats_day(result, path_stats + 'stats_m_', year + month + day)
+
+    print('saving images')
+    image_render(year, month, day, path_stats, man2aut, res_man, res_aut, land_mask, mask_diff)
 
 def get_man_file(path):
     
@@ -102,7 +115,7 @@ def get_man_file(path):
         sc = ds['SC'][0]
         polygon_id = ds['polygon_id'][0]
         polygon_reference = ds['polygon_reference'][:]
-        ice_poly_id_grid = ds ['ice_poly_id_grid'][0]
+        ice_poly_id_grid = ds['ice_poly_id_grid'][0]
         
     return ct,ca,sa,cb,sb,cc,sc,polygon_id, polygon_reference, ice_poly_id_grid
 
@@ -222,7 +235,7 @@ def ice_difference (mosaic_inter, ice_type, mask_mosaic_inter, mask_aut):
 
 
 
-def compute_stats_all (man2aut, res_man, res_aut, mask_diff, confidence):
+def compute_stats_all(man2aut, res_man, res_aut, mask_diff, confidence):
     
     m_man = res_man[mask_diff]
     m_aut = res_aut[mask_diff]
@@ -282,19 +295,47 @@ def compute_stats_all (man2aut, res_man, res_aut, mask_diff, confidence):
         total_man.append(count_man)
         total_aut.append(count_aut)
     
-    report_avg = [accuracy, macro_avg_p, macro_avg_r, macro_avg_f, weighted_avg_p, weighted_avg_r, weighted_avg_f]
-    conf_indexes = [log_loss_binary, log_loss_percentage, auc_roc_binary, auc_roc_percentage]
-    mat_lis = [p, r, f, s, matrix, jaccard_labels, total, total_man, total_aut] 
-    indexes = [b_acc, hloss, mcc, kappa, jaccard_avg]
+    #report_avg = [accuracy, macro_avg_p, macro_avg_r, macro_avg_f, weighted_avg_p, weighted_avg_r, weighted_avg_f]
+    #conf_indexes = [log_loss_binary, log_loss_percentage, auc_roc_binary, auc_roc_percentage]
+    #mat_lis = [p, r, f, s, matrix, jaccard_labels, total, total_man, total_aut] 
+    #indexes = [b_acc, hloss, mcc, kappa, jaccard_avg]
+    #datas = report_avg + conf_indexes + mat_lis + indexes
     
-    datas = report_avg + conf_indexes + mat_lis + indexes
-    
-    return datas
+    result = dict(
+        accuracy = accuracy,
+        macro_precision = macro_avg_p,
+        macro_recall = macro_avg_r,
+        macro_f1_score = macro_avg_f,
+        weighted_precision = weighted_avg_p,
+        weighted_recall = weighted_avg_r,
+        weighted_f1_score = weighted_avg_f,
+        log_loss_binary = log_loss_binary,
+        log_loss_percentage = log_loss_percentage,
+        auc_roc_binary = auc_roc_binary,
+        auc_roc_percentage = auc_roc_percentage,
+
+        precision = p,
+        recall = r,
+        fscore = f,
+        support = s,
+
+        jaccard_labels = jaccard_labels,
+        total = total,
+        total_man = total_man,
+        total_aut = total_aut,
+        
+        balanced_accuracy_score = b_acc,
+        hamming_loss = hloss,
+        cohen_kappa_score = kappa,
+        jaccard_avg = jaccard_avg,
+
+        matrix = matrix,
+    )
+    return result
 
 
 
 def confidence_metrics(m_man, m_aut, m_conf):
-    
     binary = []
     percentage = []
 
@@ -323,37 +364,6 @@ def confidence_metrics(m_man, m_aut, m_conf):
         auc_roc_percentage = 0.0
     
     return log_loss_binary, log_loss_percentage, auc_roc_binary, auc_roc_percentage
-
-
-
-def write_stats_day(datas, path_stats, filename):
-    
-    with open(path_stats + filename + '.txt', "a") as file:
-        
-        for data in datas:
-    
-            #print(type(data))
-    
-            if type(data) == float or isinstance(data, np.float64):
-                file.write(str(data) + "\n")
-
-            if type(data) == list:
-                count = ';'.join(map(str, data))
-                file.write(count+"\n")
-
-            if isinstance(data, np.ndarray):
-                if data.ndim == 1:
-                    count = ';'.join(map(str, data))
-                    file.write(count+"\n")
-
-            if isinstance(data, np.ndarray):
-                if data.ndim == 2:
-                    file.write("Confusion matrix\n")
-                    rows = ["{};{};{};{}".format(i, j, k, l) for i, j, k, l in data]
-                    conf = "\n".join(rows)
-                    file.write(conf)
-                    file.write("\n")
-
 
 
 def image_render(year, month, day, path_img, man2aut, res_man, res_aut, land_mask, mask_diff):
@@ -433,47 +443,29 @@ def image_render(year, month, day, path_img, man2aut, res_man, res_aut, land_mas
     plt.savefig(path_img+"map_"+year+month+day+".png", dpi=300, bbox_inches='tight')
 
 
-# # Run
-
-# In[6]:
-
-
 #day = '30'
 #month = '01'
 #start_date = date(2023, 1, 1)
 #end_date = date(2023, 2, 5)
-
 #path_aut = '/Data/sat/auxdata/ice_charts/NERSC/nrt.cmems-du.eu/Core/SEAICE_ARC_PHY_AUTO_L4_NRT_011_015/cmems_obs-si_arc_phy-icetype_nrt_L4-auto_P1D/'
 #path_man = '/Data/sat/auxdata/ice_charts/DMI/nrt.cmems-du.eu/Core/SEAICE_ARC_SEAICE_L4_NRT_OBSERVATIONS_011_002/cmems_obs-si_arc_physic_nrt_1km-grl_P1D-irr/'
 #path_stats = '/home/malela/data/comp2/'
 #path_stats = '/home/malela/data/img/'
-
-
-# In[13]:
-
-
 #nc_ice_comparison(start_date, end_date, path_man, path_aut, path_stats)
 
-parser = argparse.ArgumentParser()
-parser.add_argument("start", help="start date of computation YYYY-mm-dd")
-parser.add_argument("end", help="end date of computation YYYY-mm-dd")
-parser.add_argument("path_man", help="path of manuals data /path/to/data/")
-parser.add_argument("path_aut", help="path of automatics data /path/to/data/")
-parser.add_argument("path_stats", help="path of statistics results and images /path/to/data/")
-args = parser.parse_args()
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument("start", help="start date of computation YYYY-mm-dd")
+    parser.add_argument("end", help="end date of computation YYYY-mm-dd")
+    parser.add_argument("path_man", help="path of manuals data /path/to/data/")
+    parser.add_argument("path_aut", help="path of automatics data /path/to/data/")
+    parser.add_argument("path_stats", help="path of statistics results and images /path/to/data/")
+    args = parser.parse_args()
 
-istart = args.start
-istart = istart.split('-')
-start_date = date(int(istart[0]), int(istart[1]), int(istart[2]))
-iend = args.end
-iend = iend.split('-')
-end_date = date(int(iend[0]), int(iend[1]), int(iend[2]))
-
-nc_ice_comparison(start_date, end_date, args.path_man, args.path_aut, args.path_stats)
-
-
-# In[ ]:
-
-
-
-
+    istart = args.start
+    istart = istart.split('-')
+    start_date = date(int(istart[0]), int(istart[1]), int(istart[2]))
+    iend = args.end
+    iend = iend.split('-')
+    end_date = date(int(iend[0]), int(iend[1]), int(iend[2]))
+    nc_ice_comparison(start_date, end_date, args.path_man, args.path_aut, args.path_stats)

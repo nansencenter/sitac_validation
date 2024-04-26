@@ -1,15 +1,10 @@
 #!/usr/bin/env python
-# coding: utf-8
 
-# # Import
+import matplotlib
+matplotlib.use('agg')
 
-# In[6]:
-
-
-from cartopy.crs import NorthPolarStereo, LambertAzimuthalEqualArea, Globe
-import cartopy.feature as cfeature
-from scipy.interpolate import RegularGridInterpolator
-from datetime import date, datetime, timedelta
+import os
+from datetime import date, timedelta
 import glob
 import sklearn.metrics as skm
 from matplotlib.gridspec import GridSpec
@@ -19,11 +14,6 @@ import numpy as np
 from osgeo import gdal, osr, ogr
 import matplotlib.pyplot as plt
 from netCDF4 import Dataset
-
-
-# # Functions
-
-# In[11]:
 
 
 def get_gdal_dataset(x_ul, nx, dx, y_ul, ny, dy, srs_proj4, dtype=gdal.GDT_Float32):
@@ -90,7 +80,13 @@ def rasterize_icehart(shapefile, ds):
     olayer.CreateField(fidef)
     for ft in olayer:
         ft_id = ft.GetFID() + 1
-        field_vec = [ft_id] + [float(ft.GetField(field_name)) for field_name in field_names]
+        field_vec = [ft_id]
+        for field_name in field_names:
+            field_val = ft.GetField(field_name)
+            if field_val is None:
+                field_vec.append(-9)
+            else:
+                field_vec.append(float(field_val))
         field_arr.append(field_vec)
         ft.SetField('poly_index', ft_id)
         olayer.SetFeature(ft)
@@ -163,13 +159,13 @@ def week_auto_files(str_date, path_aut):
         year = single_date.strftime("%Y")
 
         aut_file = sorted(glob.glob(path_aut + year + '/' + month + '/s1_icetype_mosaic_'+year+month+day+'0600.nc')) 
-        aut_files.append(aut_file[0])
-        
+        if len(aut_file) > 0:
+            aut_files.append(aut_file[0])
     return aut_files
 
 
 def mosaic_auto_argmax(aut_files):
-    with Dataset(aut_files[5]) as ds:
+    with Dataset(aut_files[-1]) as ds:
         n, m = ds ['ice_type'][0].filled(0).shape
 
     maps = []
@@ -269,14 +265,38 @@ def compute_stats_us_aut (man2aut, res_man, res_aut, mask_diff):
         total_man.append(count_man)
         total_aut.append(count_aut)
     
-    report_avg = [accuracy, macro_avg_p, macro_avg_r, macro_avg_f, weighted_avg_p, weighted_avg_r, weighted_avg_f]
-    mat_lis = [p, r, f, s, matrix, jaccard_labels, total, total_man, total_aut] 
-    indexes = [b_acc, hloss, mcc, kappa, jaccard_avg]
-    
-    datas = report_avg + mat_lis + indexes
-    
-    return datas
+    #report_avg = [accuracy, macro_avg_p, macro_avg_r, macro_avg_f, weighted_avg_p, weighted_avg_r, weighted_avg_f]
+    #mat_lis = [p, r, f, s, matrix, jaccard_labels, total, total_man, total_aut] 
+    #indexes = [b_acc, hloss, mcc, kappa, jaccard_avg]
+    #datas = report_avg + mat_lis + indexes
+    #return datas
+    result = dict(
+        accuracy = accuracy,
+        macro_precision = macro_avg_p,
+        macro_recall = macro_avg_r,
+        macro_f1_score = macro_avg_f,
+        weighted_precision = weighted_avg_p,
+        weighted_recall = weighted_avg_r,
+        weighted_f1_score = weighted_avg_f,
 
+        precision = p,
+        recall = r,
+        fscore = f,
+        support = s,
+
+        jaccard_labels = jaccard_labels,
+        total = total,
+        total_man = total_man,
+        total_aut = total_aut,
+        
+        balanced_accuracy_score = b_acc,
+        hamming_loss = hloss,
+        cohen_kappa_score = kappa,
+        jaccard_avg = jaccard_avg,
+
+        matrix = matrix,
+    )
+    return result
 
 def write_stats_day(datas, path_stats, filename):
     
@@ -385,6 +405,9 @@ def image_render(year, month, day, path_img, man2aut, res_man, res_aut, land_mas
     
 
 def nic_nersc_day(year, month, day, path_nic, path_nersc, path_stats):
+    ofilename = f'{path_stats}/stats_{year[2:4]}{month}{day}.npz'
+    if os.path.exists(ofilename):
+        return
 
     shapefile = path_nic + 'ARCTIC' + year[2:4] + month + day + '.shp'
 
@@ -403,6 +426,11 @@ def nic_nersc_day(year, month, day, path_nic, path_nersc, path_stats):
 
     # Mosaic the automatics files
     aut_files = week_auto_files(year + '-' + month + '-' + day, path_nersc)
+    if len(aut_files) == 0:
+        print('No automatic files')
+        np.savez(ofilename, none=None)
+        return
+
     auto_mosaic = mosaic_auto_argmax(aut_files)
 
     with Dataset(aut_files[0]) as ds:
@@ -412,11 +440,10 @@ def nic_nersc_day(year, month, day, path_nic, path_nersc, path_stats):
     diff_us_aut, res_aut, res_usnic, mask_common = is_difference (auto_mosaic, map_ice)
 
     # Compute all statistiques
-    data = compute_stats_us_aut (diff_us_aut, res_usnic, res_aut, mask_common)
+    result = compute_stats_us_aut (diff_us_aut, res_usnic, res_aut, mask_common)
 
     # write statistics in a file
-    filename = 'us_stats_' + year[2:4] + month + day
-    write_stats_day(data, path_stats, filename)
+    np.savez(ofilename, **result)
 
     # Render image of maps
     image_render(year, month, day, path_stats, diff_us_aut, res_usnic, res_aut, land_mask, mask_common)
@@ -424,15 +451,17 @@ def nic_nersc_day(year, month, day, path_nic, path_nersc, path_stats):
 
 def nic_nersc_comparison(start_date, end_date, path_nic, path_nersc, path_stats):
     for single_date in daterange(start_date, end_date):
-        #print(single_date.strftime("%Y-%m-%d"))
+        print(single_date.strftime("%Y-%m-%d"))
         day = single_date.strftime("%d")
         month = single_date.strftime("%m")
         year = single_date.strftime("%Y")
-        path_nic_day = path_nic + 'Arctic_' + year + month + day + '/'
+        path_nic_day = path_nic + 'arctic' + year[2:] + month + day + '/'
         
         man_file = sorted(glob.glob(path_nic_day + 'ARCTIC' + year[2:4] + month + day + '.shp'))
         if len(man_file) == 1:
             nic_nersc_day(year, month, day, path_nic_day, path_nersc, path_stats)
+        else:
+            print('Manual ice chart does not exist')
         
 
 
