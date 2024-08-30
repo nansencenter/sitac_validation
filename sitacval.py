@@ -1,5 +1,7 @@
-from datetime import timedelta
+import argparse
+from datetime import date, timedelta
 import os
+from multiprocessing import Pool
 
 import numpy as np
 from osgeo import gdal, osr, ogr
@@ -168,7 +170,8 @@ def compute_stats(man_pixels, aut_pixels, max_val):
     weighted_avg_f = report['weighted avg']['f1-score']
 
     # Confusion matrix
-    matrix = skm.confusion_matrix(man_pixels, aut_pixels)
+    matrix = skm.confusion_matrix(man_pixels, aut_pixels, labels=range(max_val+1))
+    matrix = np.where(matrix == 0, np.nan, matrix)
 
     # Jaccard score
     jaccard_labels = skm.jaccard_score(man_pixels, aut_pixels, average=None)
@@ -178,7 +181,14 @@ def compute_stats(man_pixels, aut_pixels, max_val):
     kappa = skm.cohen_kappa_score(man_pixels, aut_pixels)
 
     # Precision, recall, fscore, support
-    p, r, f, s = skm.precision_recall_fscore_support(man_pixels, aut_pixels, average=None, warn_for=('precision', 'recall', 'f-score'))
+    p, r, f, s = skm.precision_recall_fscore_support(
+        man_pixels,
+        aut_pixels,
+        average=None,
+        labels=range(6)
+    )
+    p, r, f, s = [np.where(j == 0, np.nan, j) for j in [p, r, f, s]]
+
 
     # Matthews correlation coefficient
     mcc = skm.matthews_corrcoef(man_pixels, aut_pixels)
@@ -225,7 +235,7 @@ def compute_stats(man_pixels, aut_pixels, max_val):
     return result
 
 class ValidationNIC:
-    def __init__(self, dir_man, dir_auto, dir_stats):
+    def __init__(self, dir_man, dir_auto, dir_stats, cores):
         """
         Parameters:
         -----------
@@ -235,11 +245,14 @@ class ValidationNIC:
             Path to automatic ice charts
         dir_stats : str
             Path to save the statistics.
+        cores : int
+            Number of cores to use in parallel
 
         """
         self.dir_man = dir_man
         self.dir_auto = dir_auto
         self.dir_stats = dir_stats
+        self.cores = cores
 
     def get_difference(self, man_chart, aut_chart):
         """
@@ -301,19 +314,28 @@ class ValidationNIC:
                 aut_files.append(filename)
         return aut_files
 
-    def process_day(self, date, shapefile):
+    def process_date(self, date):
+        man_file = self.find_manual_file(date)
+        if not os.path.exists(man_file):
+            print(f'No manual {man_file} file for', date)
+            return
+
         aut_files = self.week_auto_files(date)
         if len(aut_files) == 0:
-            print('No input file for ', date, shapefile)
+            print('No auto files for ', date, man_file)
             return
-        print('Processing ', date, shapefile)
-        aut_ice_shart = self.get_aut_ice_shart(aut_files)
-        man_ice_shart = self.get_man_ice_shart(shapefile)
+        print('Processing ', date, man_file)
+        aut_ice_chart = self.get_aut_ice_chart(aut_files)
+        man_ice_chart = self.get_man_ice_chart(man_file)
 
-        diff, mask = self.get_difference(man_ice_shart, aut_ice_shart)
+        diff, mask = self.get_difference(man_ice_chart, aut_ice_chart)
 
-        self.save_stats(date, man_ice_shart, aut_ice_shart, mask)
-        self.make_maps(date, man_ice_shart, aut_ice_shart, diff, mask)
+        self.save_stats(date, man_ice_chart, aut_ice_chart, mask)
+        self.make_maps(date, man_ice_chart, aut_ice_chart, diff, mask)
+
+    def find_manual_file(self, date):
+        shapefile = f'{self.dir_man}/arctic{date.strftime("%y%m%d")}/ARCTIC{date.strftime("%y%m%d")}.shp'
+        return shapefile
 
     def process_date_range(self, start_date, end_date, ):
         """
@@ -328,9 +350,23 @@ class ValidationNIC:
 
         """
         # Iterate through each date in the range
-        for date in daterange(start_date, end_date):
-            shapefile = f'{self.dir_man}/arctic{date.strftime("%y%m%d")}/ARCTIC{date.strftime("%y%m%d")}.shp'
-            if os.path.exists(shapefile):
-                self.process_day(date, shapefile)
+        with Pool(self.cores) as p:
+            p.map(self.process_date, daterange(start_date, end_date))
 
+def parse_and_run(ValidationClass):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("start", help="start date of computation YYYY-mm-dd")
+    parser.add_argument("end", help="end date of computation YYYY-mm-dd")
+    parser.add_argument("dir_man", help="Path to manual ice charts")
+    parser.add_argument("dir_aut", help="Path to automatic ice charts")
+    parser.add_argument("dir_stats", help="Path to save statistics results and images")
+    parser.add_argument('-s', '--step', help="Subsampling of DMI ice chart", type=int, default=10)
+    parser.add_argument('-c', '--cores', help="Parallel cores to use", type=int, default=5)
+    args = parser.parse_args()
 
+    start_date = date.fromisoformat(args.start)
+    end_date = date.fromisoformat(args.end)
+
+    vn = ValidationClass(args.dir_man, args.dir_aut, args.dir_stats, args.cores)
+    vn.step = args.step
+    vn.process_date_range(start_date, end_date)

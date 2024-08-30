@@ -93,7 +93,7 @@ class ValidationNIC_NERSC(ValidationNIC):
         "Multi-Year Ice",
     ]
 
-    def get_man_ice_shart(self, shapefile):
+    def get_man_ice_chart(self, shapefile):
             # Define raster parameters
             x_ul = -871516.0
             nx = 2800
@@ -109,7 +109,7 @@ class ValidationNIC_NERSC(ValidationNIC):
             map_ice = ice_type_map(polyindex_arr, icecodes)
             return {'sod': map_ice}
 
-    def get_aut_ice_shart(self, aut_files):
+    def get_aut_ice_chart(self, aut_files):
         """
         Create a mosaic of ice types based on automatic files using argmax of probabilities.
 
@@ -162,8 +162,8 @@ class ValidationNIC_NERSC(ValidationNIC):
             land_mask = ds['ice_type'][0].filled(0) == -1
         return {'sod': max_prob_idx, 'landmask': land_mask}
 
-    def save_stats(self, date, man_ice_shart, aut_ice_shart, mask):
-        stats = compute_stats(man_ice_shart['sod'][mask['sod']], aut_ice_shart['sod'][mask['sod']], self.max_value['sod'])
+    def save_stats(self, date, man_ice_chart, aut_ice_chart, mask):
+        stats = compute_stats(man_ice_chart['sod'][mask['sod']], aut_ice_chart['sod'][mask['sod']], self.max_value['sod'])
         stats['labels'] = self.labels
         stats_filename = f'{self.dir_stats}/stats_{date.strftime("%Y%m%d")}.npz'
         np.savez(stats_filename, **stats)
@@ -264,8 +264,8 @@ class ValidationNIC_NERSC(ValidationNIC):
         plt.close()
         print(map_filename)
 
-    def make_maps(self, date, man_ice_shart, aut_ice_shart, diff, mask):
-        self.image_render(date, diff['sod'], man_ice_shart['sod'], aut_ice_shart['sod'], aut_ice_shart['landmask'], mask['sod'])
+    def make_maps(self, date, man_ice_chart, aut_ice_chart, diff, mask):
+        self.image_render(date, diff['sod'], man_ice_chart['sod'], aut_ice_chart['sod'], aut_ice_chart['landmask'], mask['sod'])
 
 
 def main():

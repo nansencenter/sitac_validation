@@ -12,7 +12,7 @@ from matplotlib import cm, colors
 from netCDF4 import Dataset
 from scipy.stats import pearsonr
 
-from sitacval import ValidationNIC, get_gdal_dataset, rasterize_icehart, compute_stats, gdal
+from sitacval import ValidationNIC, get_gdal_dataset, rasterize_icehart, compute_stats, gdal, parse_and_run
 
 def get_dmi_dataset(step=10):
     srs = "+proj=stere +lat_0=90 +lat_ts=70 +lon_0=-45 +x_0=0 +y_0=0 +a=6378273 +b=6356889.449 +units=m +no_defs"
@@ -100,13 +100,15 @@ def read_dmi_ice_chart(dmi_file, step):
         sod_dmi = ds['sod'][0, ::step, ::step].astype(float).filled(np.nan) + 1
         sic_dmi = ds['sic'][0, ::step, ::step].astype(float).filled(np.nan)
         flg_dmi = ds['status_flag'][0, ::step, ::step]
+        xc = ds['xc'][::step]
+        yc = ds['yc'][::step]
 
     lnd_dmi = (flg_dmi & 64) > 0
     sic_dmi[lnd_dmi] = -1
     sod_dmi[sic_dmi < 15] = 0
     sod_dmi[lnd_dmi] = -1
 
-    return sod_dmi, sic_dmi, lnd_dmi
+    return sod_dmi, sic_dmi, lnd_dmi, xc, yc
 
 def plot_difference(diff_array, mask_common, land_mask, ax, title, shrink=0.5, factor=1.):
     cowa = cm.get_cmap('coolwarm', 7)
@@ -177,12 +179,14 @@ class ValidationNIC_DMI(ValidationNIC):
         "Multi-Year Ice",
         "Glacier Ice",
     ]
+    map_label_aut = 'DMI-auto'
+    map_label_man = 'NIC-manual'
 
-    def get_aut_ice_shart(self, aut_files):
+    def get_aut_ice_chart(self, aut_files):
         sods, sics =[], []
         for aut_file in aut_files:
             print('Reading automatic ice chart from ', aut_file)
-            sod_dmi, sic_dmi, lnd_dmi = read_dmi_ice_chart(aut_file, self.step)
+            sod_dmi, sic_dmi, lnd_dmi, xc, yc = read_dmi_ice_chart(aut_file, self.step)
             sods.append(sod_dmi)
             sics.append(sic_dmi)
         sics = np.dstack(sics)
@@ -190,63 +194,48 @@ class ValidationNIC_DMI(ValidationNIC):
         return {
             'sod': np.nanmedian(sods, axis=2),
             'sic': np.nanmedian(sics, axis=2),
-            'landmask': lnd_dmi
+            'landmask': lnd_dmi,
+            'xc': xc,
+            'yc': yc,
         }
 
-    def get_man_ice_shart(self, shapefile):
+    def get_man_ice_chart(self, shapefile):
         sod_nic, sic_nic = read_nic_icechart(shapefile, self.step)
         return {
             'sod': sod_nic,
             'sic': sic_nic,
         }
 
-    def save_stats(self, date, man_ice_shart, aut_ice_shart, mask):
-        aut_sod = np.round(aut_ice_shart['sod'][mask['sod']]).astype(int)
-        man_sod = np.round(man_ice_shart['sod'][mask['sod']]).astype(int)
+    def save_stats(self, date, man_ice_chart, aut_ice_chart, mask):
+        aut_sod = np.round(aut_ice_chart['sod'][mask['sod']]).astype(int)
+        man_sod = np.round(man_ice_chart['sod'][mask['sod']]).astype(int)
         stats = compute_stats(man_sod, aut_sod, self.max_value['sod'])
-        sic_stats = compute_sic_stats(man_ice_shart['sic'], aut_ice_shart['sic'], mask['sic'])
+        sic_stats = compute_sic_stats(man_ice_chart['sic'], aut_ice_chart['sic'], mask['sic'])
         stats.update(sic_stats)
         stats['labels'] = self.labels
         stats_filename = f'{self.dir_stats}/stats_{date.strftime("%Y%m%d")}.npz'
         np.savez(stats_filename, **stats)
         print(stats_filename)
 
-    def make_maps(self, date, man_ice_shart, aut_ice_shart, diff, mask):
+    def make_maps(self, date, man_ice_chart, aut_ice_chart, diff, mask):
         fig, axs = plt.subplots(1, 3, figsize=(15, 5), sharey=True)
-        plot_sod_map(man_ice_shart['sod'], aut_ice_shart['landmask'], axs[0], f'NIC SoD, {date.strftime("%Y-%m-%d")}', self.labels)
-        plot_sod_map(aut_ice_shart['sod'], aut_ice_shart['landmask'], axs[1], 'DMI SoD chart', self.labels, shrink=0)
-        plot_difference(diff['sod'], mask['sod'], aut_ice_shart['landmask'], axs[2], 'Difference')
+        plot_sod_map(man_ice_chart['sod'], aut_ice_chart['landmask'], axs[0], f'{self.map_label_man}-SoD, {date.strftime("%Y-%m-%d")}', self.labels)
+        plot_sod_map(aut_ice_chart['sod'], aut_ice_chart['landmask'], axs[1], f'{self.map_label_aut}-SoD', self.labels, shrink=0)
+        plot_difference(diff['sod'], mask['sod'], aut_ice_chart['landmask'], axs[2], 'Difference')
         map_filename = f'{self.dir_stats}/map_sod_{date.strftime("%Y%m%d")}.png'
         plt.savefig(map_filename, dpi=300, bbox_inches='tight')
         plt.close()
         print(map_filename)
 
         fig, axs = plt.subplots(1, 3, figsize=(15, 5), sharey=True)
-        plot_sic_map(man_ice_shart['sic'], aut_ice_shart['landmask'], axs[0], f'NIC SIC, {date.strftime("%Y-%m-%d")}')
-        plot_sic_map(aut_ice_shart['sic'], aut_ice_shart['landmask'], axs[1], 'DMI SIC', shrink=0)
-        plot_difference(diff['sic'], mask['sic'], aut_ice_shart['landmask'], axs[2], 'Difference', factor=10)
+        plot_sic_map(man_ice_chart['sic'], aut_ice_chart['landmask'], axs[0], f'{self.map_label_man}-SIC, {date.strftime("%Y-%m-%d")}')
+        plot_sic_map(aut_ice_chart['sic'], aut_ice_chart['landmask'], axs[1], f'{self.map_label_aut}-SIC', shrink=0)
+        plot_difference(diff['sic'], mask['sic'], aut_ice_chart['landmask'], axs[2], 'Difference', factor=10)
         map_filename = f'{self.dir_stats}/map_sic_{date.strftime("%Y%m%d")}.png'
         plt.savefig(map_filename, dpi=300, bbox_inches='tight')
         plt.close()
         print(map_filename)
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("start", help="start date of computation YYYY-mm-dd")
-    parser.add_argument("end", help="end date of computation YYYY-mm-dd")
-    parser.add_argument("dir_man", help="Path to manual ice charts")
-    parser.add_argument("dir_aut", help="Path to automatic ice charts")
-    parser.add_argument("dir_stats", help="Path to save statistics results and images")
-    parser.add_argument('-s', '--step', help="Subsampling of DMI ice chart", type=int, default=10)
-    args = parser.parse_args()
-
-    start_date = date.fromisoformat(args.start)
-    end_date = date.fromisoformat(args.end)
-
-    vn = ValidationNIC_DMI(args.dir_man, args.dir_aut, args.dir_stats)
-    vn.step = args.step
-    vn.process_date_range(start_date, end_date)
-
 if __name__ == "__main__":
-    main()
+    parse_and_run(ValidationNIC_DMI)
