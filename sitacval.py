@@ -1,7 +1,12 @@
-import argparse
-from datetime import date, timedelta
-import os
-from multiprocessing import Pool
+from datetime import timedelta
+
+from cmocean import cm as cmo
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib import cm, colors
+from netCDF4 import Dataset
+from scipy.interpolate import RegularGridInterpolator
+from scipy.stats import pearsonr
 
 import numpy as np
 from osgeo import gdal, osr, ogr
@@ -234,139 +239,208 @@ def compute_stats(man_pixels, aut_pixels, max_val):
     )
     return result
 
-class ValidationNIC:
-    def __init__(self, dir_man, dir_auto, dir_stats, cores):
-        """
-        Parameters:
-        -----------
-        dir_man : str
-            Path to NIC data.
-        dir_auto : str
-            Path to automatic ice charts
-        dir_stats : str
-            Path to save the statistics.
-        cores : int
-            Number of cores to use in parallel
+def get_dmi_dataset(step=10):
+    srs = "+proj=stere +lat_0=90 +lat_ts=70 +lon_0=-45 +x_0=0 +y_0=0 +a=6378273 +b=6356889.449 +units=m +no_defs"
+    x_ul = -3849750.0
+    y_ul = 5849750.0
+    nx = 15200 // step
+    ny = 22400 // step
+    dx = 500. * step
+    dy = -500. * step
+    return get_gdal_dataset(x_ul, nx, dx, y_ul, ny, dy, srs, gdal.GDT_Int16)
 
-        """
-        self.dir_man = dir_man
-        self.dir_auto = dir_auto
-        self.dir_stats = dir_stats
-        self.cores = cores
+def get_ice_type_mapping():
+    ice_type_maping = np.zeros(100, int)
+    # water
+    ice_type_maping[0] = 1
+    #0 - Young Ice (81, 82, 83, 84, 85)
+    ice_type_maping[81] = 2
+    ice_type_maping[82] = 2
+    ice_type_maping[83] = 2
+    ice_type_maping[84] = 2
+    ice_type_maping[85] = 2
+    #1 - Thin FY Ice (87, 88, 89)
+    ice_type_maping[87] = 3
+    ice_type_maping[88] = 3
+    ice_type_maping[89] = 3
+    #2 - Thick FY Ice (86, 91, 93)
+    ice_type_maping[86] = 4
+    ice_type_maping[91] = 4
+    ice_type_maping[93] = 4
+    #3 - MY Ice (95, 96, 97)
+    ice_type_maping[95] = 5
+    ice_type_maping[96] = 5
+    ice_type_maping[97] = 5
+    #4 - Glacier Ice (98)
+    ice_type_maping[98] = 6
+    return ice_type_maping
 
-    def get_difference(self, man_chart, aut_chart):
-        """
-        Calculate the difference between two ice charts
+def get_ct_ca_cb_cc(icecodes):
+    CT, CA, CB, CC = icecodes[:, 1:5].T.astype(int)
+    CA[CA == -9] = CT[CA == -9]
+    CB[CB == -9] = 0
+    CC[CC == -9] = 0
+    return CT, CA, CB, CC
 
-        Parameters:
-        -----------
-        man_chart : numpy.ndarray
-            Ice type mosaic generated from NIC data.
-        aut_chart : numpy.ndarray
-            Ice type mosaic generated from automatic data.
+def get_sa_sb_sc(icecodes, ice_type_maping):
+    SA_SB_SC = []
+    for i in [5, 6, 7]:
+        icecodes_S = icecodes[:, i].astype(int)
+        icecodes_S[icecodes_S  == -9] = 99
+        mapped_S = ice_type_maping[icecodes_S]
+        SA_SB_SC.append(mapped_S)
+    return SA_SB_SC
 
-        Returns:
-        --------
-        diff : numpy.ndarray
-            Difference between man_chart and aut_chart
-        res_man : numpy.ndarray
-            NIC ice type mosaic.
-        res_aut : numpy.ndarray
-            Automatic ice type mosaic.
-        mask_common : numpy.ndarray
-            Mask of common areas between two mosaics.
+def get_ice_type_fractions_nic(icecodes, CA, CB, CC, SA, SB, SC):
+    ice_type_fractions = np.zeros((len(icecodes), 7))
+    ice_type_fractions[range(len(icecodes)), SA] += CA
+    ice_type_fractions[range(len(icecodes)), SB] += CB
+    ice_type_fractions[range(len(icecodes)), SC] += CC
+    ice_type_fractions[:, 1] = 100 - ice_type_fractions[:, 2:].sum(axis=1)
+    return ice_type_fractions
 
-        """
-        diff = {}
-        mask = {}
-        for prod in self.products:
-            # Calculate mask
-            mask[prod] = (
-                (man_chart[prod] >= 0) *
-                (aut_chart[prod] >= 0) *
-                np.isfinite(man_chart[prod] * aut_chart[prod])
-            )
+def get_sod_sic_maps_nic(polyindex_arr, icecodes, ice_type_fractions, CT):
+    icecodes_i = icecodes[:, 0].astype(int)
+    sod_poly = np.zeros(polyindex_arr.max() + 1)
+    sod_poly[icecodes_i] = np.argmax(ice_type_fractions, axis=1)
+    sod_map = sod_poly[polyindex_arr] - 1
 
-            # Calculate the difference between NIC and automatic mosaics
-            diff[prod] = aut_chart[prod] - man_chart[prod]
-            diff[prod][~mask[prod]] = 0
+    sic_poly = np.zeros(polyindex_arr.max() + 1) - 1
+    sic_poly[icecodes_i] = CT #ice_type_fractions[:, 1]
+    sic_map = sic_poly[polyindex_arr]
+    return sod_map, sic_map
 
-        return diff, mask
+def read_nic_icechart(nic_file, step):
+    ds = get_dmi_dataset(step)
+    polyindex_arr, icecodes = rasterize_icehart(nic_file, ds)
+    ice_type_maping = get_ice_type_mapping()
+    CT, CA, CB, CC = get_ct_ca_cb_cc(icecodes)
+    SA, SB, SC = get_sa_sb_sc(icecodes, ice_type_maping)
+    ice_type_fractions = get_ice_type_fractions_nic(icecodes, CA, CB, CC, SA, SB, SC)
+    sod_nic, sic_nic = get_sod_sic_maps_nic(polyindex_arr, icecodes, ice_type_fractions, CT)
+    return sod_nic, sic_nic
 
-    def week_auto_files(self, end_date):
-        """
-        Get the list of automatic files for the week ending at str_date.
+def read_dmi_ice_chart(dmi_file, step):
+    with Dataset(dmi_file) as ds:
+        sod_dmi = ds['sod'][0, ::step, ::step].astype(float).filled(np.nan) + 1
+        sic_dmi = ds['sic'][0, ::step, ::step].astype(float).filled(np.nan)
+        flg_dmi = ds['status_flag'][0, ::step, ::step]
+        xc = ds['xc'][::step]
+        yc = ds['yc'][::step]
 
-        Parameters:
-        -----------
-        end_date : str
-            Date of NIC shapefile (end of period)
+    lnd_dmi = (flg_dmi & 64) > 0
+    sic_dmi[lnd_dmi] = -1
+    sod_dmi[sic_dmi < 15] = 0
+    sod_dmi[lnd_dmi] = -1
 
-        Returns:
-        --------
-        aut_files : list
-            List of automatic files for the week ending at end_date.
-        """
-        aut_files = []
-        for single_date in weekrange(end_date):
-            filename = f'{self.dir_auto}/{single_date.strftime(self.dir_auto_format)}'
-            if os.path.exists(filename):
-                aut_files.append(filename)
-        return aut_files
+    return sod_dmi, sic_dmi, lnd_dmi, xc, yc
 
-    def process_date(self, date):
-        man_file = self.find_manual_file(date)
-        if not os.path.exists(man_file):
-            print(f'No manual {man_file} file for', date)
-            return
+def plot_difference(diff_array, mask_common, land_mask, ax, title, shrink=0.5, factor=1.):
+    cowa = cm.get_cmap('coolwarm', 7)
+    coolwarm_colors = [colors.rgb2hex(cowa(i)) for i in range(0, cowa.N)]
+    cmap_diff = plt.cm.colors.ListedColormap(['gray', 'white'] + coolwarm_colors)
+    diff_array = np.array(diff_array) / factor
+    diff_array[~mask_common] = -4
+    diff_array[land_mask] = -5
+    tick_labels = np.arange(-3., 4.)
+    tick_labels *= factor
 
-        aut_files = self.week_auto_files(date)
-        if len(aut_files) == 0:
-            print('No auto files for ', date, man_file)
-            return
-        print('Processing ', date, man_file)
-        aut_ice_chart = self.get_aut_ice_chart(aut_files)
-        man_ice_chart = self.get_man_ice_chart(man_file)
+    imsh = ax.imshow(diff_array, clim=[-5, 3], cmap=cmap_diff, interpolation='nearest')
+    cbar = plt.colorbar(imsh, ax=ax, shrink=shrink)
+    cbar.ax.yaxis.set_ticks(np.linspace(-4.5, 2.5, 9), ['land', 'no data'] + list(tick_labels.astype(int)))
+    ax.set_title(title)
 
-        diff, mask = self.get_difference(man_ice_chart, aut_ice_chart)
+def plot_sod_map(sod_array, land_mask, ax, title, labels, shrink=0.5):
+    map_array = np.array(sod_array)
+    map_array[np.isnan(map_array)] = -2
+    map_array[land_mask] = -1
+    cmap_hugo = plt.cm.colors.ListedColormap(['white', '#bbb', '#0064ff', '#aa28f0', '#ffff00', '#ca0', '#e54', '#500'])
 
-        self.save_stats(date, man_ice_chart, aut_ice_chart, mask)
-        self.make_maps(date, man_ice_chart, aut_ice_chart, diff, mask)
+    im10 = ax.imshow(map_array, interpolation='nearest', cmap=cmap_hugo, clim=[-2, 5])
+    if shrink > 0:
+        cbar = plt.colorbar(im10, ax=ax, shrink=shrink)
+        cbar.ax.yaxis.set_ticks(np.linspace(-1.5, 4.5, 8), ['No Data', 'Land'] + labels)
+    ax.set_title(title)
 
-    def find_manual_file(self, date):
-        shapefile = f'{self.dir_man}/arctic{date.strftime("%y%m%d")}/ARCTIC{date.strftime("%y%m%d")}.shp'
-        return shapefile
+def plot_sic_map(sic_array, land_mask, ax, title, shrink=0.5):
+    map_array = np.array(sic_array)
+    map_array[np.isnan(map_array)] = -1
+    map_array[land_mask] = -2
+    ice_colors = [colors.rgb2hex(i) for i in cmo.ice.resampled(101)(np.arange(0, 101))]
+    sic_cmap = plt.cm.colors.ListedColormap(['#ccb', '#ffe'] + ice_colors)
+    im10 = ax.imshow(map_array, interpolation='nearest', cmap=sic_cmap, clim=[-2, 100])
+    if shrink > 0:
+        cbar = plt.colorbar(im10, ax=ax, shrink=shrink)
+    ax.set_title(title)
 
-    def process_date_range(self, start_date, end_date, ):
-        """
-        Compare NIC and automatic ice charts for a range of dates, compute statistics, and render images.
+def compute_sic_stats(man_sic, aut_sic, mask_sic):
+    man_sic_ = man_sic[mask_sic]
+    aut_sic_ = aut_sic[mask_sic]
 
-        Parameters:
-        -----------
-        start_date : datetime.date
-            Start date.
-        end_date : datetime.date
-            End date.
+    man_sic_bins = np.unique(man_sic_)
+    aut_sic_avgs = []
+    aut_sic_stds = []
+    for man_sic_bin in man_sic_bins:
+        gpi = man_sic_ == man_sic_bin
+        aut_sic_avgs.append(aut_sic_[gpi].mean())
+        aut_sic_stds.append(aut_sic_[gpi].std())
 
-        """
-        # Iterate through each date in the range
-        with Pool(self.cores) as p:
-            p.map(self.process_date, daterange(start_date, end_date))
+    aut_sic_avgs = np.array(aut_sic_avgs)
+    aut_sic_stds = np.array(aut_sic_stds)
+    return {
+        'all_sic_pearsonr': pearsonr(man_sic_, aut_sic_)[0],
+        'avg_sic_pearsonr': pearsonr(man_sic_bins, aut_sic_avgs)[0],
+    }
 
-def parse_and_run(ValidationClass):
-    parser = argparse.ArgumentParser()
-    parser.add_argument("start", help="start date of computation YYYY-mm-dd")
-    parser.add_argument("end", help="end date of computation YYYY-mm-dd")
-    parser.add_argument("dir_man", help="Path to manual ice charts")
-    parser.add_argument("dir_aut", help="Path to automatic ice charts")
-    parser.add_argument("dir_stats", help="Path to save statistics results and images")
-    parser.add_argument('-s', '--step', help="Subsampling of DMI ice chart", type=int, default=10)
-    parser.add_argument('-c', '--cores', help="Parallel cores to use", type=int, default=5)
-    args = parser.parse_args()
+# DMI reference ice chart
+def get_man_file(path):
+    with Dataset(path) as ds:
+        ct = ds['CT'][0].astype(int).filled(0)
+        ca = ds['CA'][0].astype(int).filled(0)
+        cb = ds['CB'][0].astype(int).filled(0)
+        cc = ds['CC'][0].astype(int).filled(0)
+        sa = ds['SA'][0].astype(int).filled(0)
+        sb = ds['SB'][0].astype(int).filled(0)
+        sc = ds['SC'][0].astype(int).filled(0)
+        ice_poly_id_grid = ds['ice_poly_id_grid'][0, ::-1]
+    return ct,ca,sa,cb,sb,cc,sc,ice_poly_id_grid
 
-    start_date = date.fromisoformat(args.start)
-    end_date = date.fromisoformat(args.end)
+def get_ice_type_fractions_dmi(icecodes, CA, CB, CC, SA, SB, SC):
+    ice_type_fractions = np.zeros((len(icecodes), 7))
+    ice_type_fractions[range(len(icecodes)), SA] += CA
+    ice_type_fractions[range(len(icecodes)), SB] += CB
+    ice_type_fractions[range(len(icecodes)), SC] += CC
+    ice_type_fractions[:, 1] = 100 - ice_type_fractions[:, 2:].sum(axis=1)
+    return ice_type_fractions
 
-    vn = ValidationClass(args.dir_man, args.dir_aut, args.dir_stats, args.cores)
-    vn.step = args.step
-    vn.process_date_range(start_date, end_date)
+def correct_ca_cb_cc(CT, CA, CB, CC):
+    CA[CA == -9] = CT[CA == -9]
+    CB[CB == -9] = 0
+    CC[CC == -9] = 0
+    return CA, CB, CC
+
+def correct_sa_sb_sc(SA, SB, SC, ice_type_maping):
+    SA_SB_SC = []
+    for s in [SA, SB, SC]:
+        s[s  == -9] = 99
+        SA_SB_SC.append(ice_type_maping[s])
+    return SA_SB_SC
+
+def get_sod_sic_maps_dmi(ice_type_fractions, ice_poly_id_grid, ct):
+    sod = np.argmax(ice_type_fractions, axis=1)
+    ice_poly_id_grid_int = ice_poly_id_grid.filled(0).astype(int)
+    sic_map = ct[ice_poly_id_grid_int].astype(float)
+    sic_map[ice_poly_id_grid.mask] = np.nan
+    sod_map = sod[ice_poly_id_grid_int].astype(float) - 1
+    sod_map[ice_poly_id_grid.mask] = np.nan
+    return sod_map, sic_map
+
+def reproject(src_crs, src_x, src_y, src_arrays, dst_crs, dst_x, dst_y):
+    dst_x_grd, dst_y_grd = np.meshgrid(dst_x, dst_y)
+    dst_x_grd_pro, dst_y_grd_pro, _ = src_crs.transform_points(dst_crs, dst_x_grd.flatten(), dst_y_grd.flatten()).T
+    dst_arrays = []
+    for src_array in src_arrays:
+        rgi = RegularGridInterpolator((src_y, src_x), src_array, method='nearest', bounds_error=False)
+        dst_array = rgi((dst_y_grd_pro, dst_x_grd_pro))
+        dst_arrays.append(dst_array.reshape(dst_x_grd.shape))
+    return dst_arrays
