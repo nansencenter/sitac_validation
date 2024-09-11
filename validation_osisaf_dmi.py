@@ -1,15 +1,15 @@
+import os
 from netCDF4 import Dataset
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
 from sitacval import read_dmi_ice_chart
-from validate_on_dmi_DMI import ValidationDMI_DMI
+from validation_dmi_dmi import Validation_DMI_DMI
 
-class ValidationOSISAF_DMI(ValidationDMI_DMI):
+class Validation_OSISAF_DMI(Validation_DMI_DMI):
     products = ['sic']
     map_label_aut = 'DMI-auto'
     map_label_man = 'OSI-SAF'
-    step = 1
 
     def week_auto_files(self, end_date):
         """
@@ -25,7 +25,11 @@ class ValidationOSISAF_DMI(ValidationDMI_DMI):
         aut_files : list
             List of automatic files for the week ending at end_date.
         """
-        return [f'{self.dir_auto}/{end_date.strftime(self.dir_auto_format)}']
+        auto_file = f'{self.dir_auto}/{end_date.strftime(self.dir_auto_format)}'
+        if os.path.exists(auto_file):
+            return [auto_file]
+        else:
+            return []
 
     def get_aut_ice_chart(self, aut_files):
         y_min, y_max, y_size = -5345000, 5845000,  1120
@@ -35,13 +39,16 @@ class ValidationOSISAF_DMI(ValidationDMI_DMI):
 
         _, sic_dmi, lnd_dmi, xc, yc = read_dmi_ice_chart(aut_files[0], self.step)
 
-        rgi = RegularGridInterpolator((yc, xc), sic_dmi.astype(float), method='nearest', bounds_error=False)
-        man_y_grd, man_x_grd = np.meshgrid(man_y, man_x, indexing='ij')
-        aut_sic_pro = rgi((man_y_grd, man_x_grd))
+        dmi_arrays_pro = []
+        for dmi_array in [sic_dmi, lnd_dmi]:
+            rgi = RegularGridInterpolator((yc, xc), dmi_array, method='nearest', bounds_error=False)
+            man_y_grd, man_x_grd = np.meshgrid(man_y, man_x, indexing='ij')
+            dmi_array_pro = rgi((man_y_grd, man_x_grd))
+            dmi_arrays_pro.append(dmi_array_pro)
 
         return {
-            'sic': aut_sic_pro,
-            'landmask': lnd_dmi,
+            'sic': dmi_arrays_pro[0],
+            'landmask': dmi_arrays_pro[1],
         }
 
     def get_man_ice_chart(self, man_file):
@@ -54,3 +61,9 @@ class ValidationOSISAF_DMI(ValidationDMI_DMI):
     def find_manual_file(self, date):
         shapefile = f'{self.dir_man}/ice_conc_nh_polstere-100_amsr2_{date.strftime("%Y%m%d")}1200.nc'
         return shapefile
+
+    def save_stats(self, date, man_ice_chart, aut_ice_chart, mask):
+        self.save_sic_stats(date, man_ice_chart, aut_ice_chart, mask)
+
+    def make_maps(self, date, man_ice_chart, aut_ice_chart, diff, mask):
+        self.make_sic_maps(date, man_ice_chart, aut_ice_chart, diff, mask)

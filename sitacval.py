@@ -160,7 +160,7 @@ def get_gdal_dataset(x_ul, nx, dx, y_ul, ny, dy, srs_proj4, dtype=gdal.GDT_Float
 
     return dst_ds
 
-def compute_stats(man_pixels, aut_pixels, max_val):
+def compute_sod_stats(man_pixels, aut_pixels, max_val):
     # Calculate classification report
     report = skm.classification_report(man_pixels, aut_pixels, digits=3, output_dict=True)
 
@@ -444,3 +444,73 @@ def reproject(src_crs, src_x, src_y, src_arrays, dst_crs, dst_x, dst_y):
         dst_array = rgi((dst_y_grd_pro, dst_x_grd_pro))
         dst_arrays.append(dst_array.reshape(dst_x_grd.shape))
     return dst_arrays
+
+
+def SI_type(stage):
+    """
+    Determine the ice type based on stage
+
+    Parameters:
+    -----------
+    stage : int
+        Ice stage value
+
+    Returns:
+    --------
+    index_ : int
+        Ice type index:
+        0 - ice_free
+        1 - Young ice
+        2 - First year ice
+        3 - Multiyear ice
+    """
+
+    index_ = 0
+
+    if stage == 0:
+        index_ = 0
+    #print('ice_free')
+
+    if 81 <= stage < 86:
+        #print('Young ice')
+        index_=1
+    if 86 <= stage < 94:
+        #print('First year ice')
+        index_=2
+    if 95 <= stage < 98:
+        #print('multiyear ice')
+        index_=3
+    return index_
+
+def ice_type_map(polyindex_arr, icecodes):
+    """
+    Map ice type to polygons based on icecodes
+
+    Parameters:
+    -----------
+    polyindex_arr : numpy.ndarray
+        Array containing polygon indices
+    icecodes : numpy.ndarray
+        Array containing ice codes and stages
+
+    Returns:
+    --------
+    it_array : numpy.ndarray
+        Array containing ice type values for each polygon
+    """
+
+    it_array = np.zeros(polyindex_arr.shape, dtype=float)
+    it_array[:] = -1
+
+    polyids = np.unique(polyindex_arr)
+
+    for polyid in polyids:
+        mask = polyindex_arr == polyid
+        i = np.where(icecodes[:, 0] == polyid)[0]
+        if len(i) > 0:
+            ice = np.argmax([icecodes[i, 2], icecodes[i, 3], icecodes[i, 4]])
+            sod = [icecodes[i, 5], icecodes[i, 6], icecodes[i, 7]]
+            ice_type = SI_type(sod[ice])
+
+            it_array[mask] = ice_type
+    return it_array

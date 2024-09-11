@@ -2,11 +2,20 @@ import os
 from multiprocessing import Pool
 
 import numpy as np
+import matplotlib.pyplot as plt
 
-from sitacval import daterange, weekrange
+from sitacval import (
+    daterange,
+    weekrange,
+    compute_sod_stats,
+    compute_sic_stats,
+    plot_sod_map,
+    plot_sic_map,
+    plot_difference,
+)
 
 class ValidationBase:
-    def __init__(self, dir_man, dir_auto, dir_stats, cores):
+    def __init__(self, dir_man, dir_auto, dir_stats, cores, step):
         """
         Parameters:
         -----------
@@ -24,6 +33,8 @@ class ValidationBase:
         self.dir_auto = dir_auto
         self.dir_stats = dir_stats
         self.cores = cores
+        self.step = step
+        os.makedirs(self.dir_stats, exist_ok=True)
 
     def get_difference(self, man_chart, aut_chart):
         """
@@ -124,3 +135,37 @@ class ValidationBase:
         with Pool(self.cores) as p:
             p.map(self.process_date, daterange(start_date, end_date))
 
+    def save_sod_stats(self, date, man_ice_chart, aut_ice_chart, mask):
+        aut_sod = np.round(aut_ice_chart['sod'][mask['sod']]).astype(int)
+        man_sod = np.round(man_ice_chart['sod'][mask['sod']]).astype(int)
+        sod_stats = compute_sod_stats(man_sod, aut_sod, self.max_value['sod'])
+        sod_stats['labels'] = self.labels
+        sod_stats_filename = f'{self.dir_stats}/stats_sod_{date.strftime("%Y%m%d")}.npz'
+        np.savez(sod_stats_filename, **sod_stats)
+        print(sod_stats_filename)
+
+    def save_sic_stats(self, date, man_ice_chart, aut_ice_chart, mask):
+        sic_stats = compute_sic_stats(man_ice_chart['sic'], aut_ice_chart['sic'], mask['sic'])
+        sic_stats_filename = f'{self.dir_stats}/stats_sic_{date.strftime("%Y%m%d")}.npz'
+        np.savez(sic_stats_filename, **sic_stats)
+        print(sic_stats_filename)
+
+    def make_sod_maps(self, date, man_ice_chart, aut_ice_chart, diff, mask):
+        fig, axs = plt.subplots(1, 3, figsize=(15, 5), sharey=True)
+        plot_sod_map(man_ice_chart['sod'], aut_ice_chart['landmask'], axs[0], f'{self.map_label_man}-SoD, {date.strftime("%Y-%m-%d")}', self.labels)
+        plot_sod_map(aut_ice_chart['sod'], aut_ice_chart['landmask'], axs[1], f'{self.map_label_aut}-SoD', self.labels, shrink=0)
+        plot_difference(diff['sod'], mask['sod'], aut_ice_chart['landmask'], axs[2], 'Difference')
+        map_filename = f'{self.dir_stats}/map_sod_{date.strftime("%Y%m%d")}.png'
+        plt.savefig(map_filename, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(map_filename)
+
+    def make_sic_maps(self, date, man_ice_chart, aut_ice_chart, diff, mask):
+        fig, axs = plt.subplots(1, 3, figsize=(15, 5), sharey=True)
+        plot_sic_map(man_ice_chart['sic'], aut_ice_chart['landmask'], axs[0], f'{self.map_label_man}-SIC, {date.strftime("%Y-%m-%d")}')
+        plot_sic_map(aut_ice_chart['sic'], aut_ice_chart['landmask'], axs[1], f'{self.map_label_aut}-SIC', shrink=0)
+        plot_difference(diff['sic'], mask['sic'], aut_ice_chart['landmask'], axs[2], 'Difference', factor=10)
+        map_filename = f'{self.dir_stats}/map_sic_{date.strftime("%Y%m%d")}.png'
+        plt.savefig(map_filename, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(map_filename)

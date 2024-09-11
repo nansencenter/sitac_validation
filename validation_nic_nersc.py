@@ -8,81 +8,13 @@ import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 from netCDF4 import Dataset
-from osgeo import gdal, ogr
+from osgeo import gdal
 
-from sitacval import ValidationNIC, get_gdal_dataset, rasterize_icehart, compute_stats
-
-def SI_type(stage):
-    """
-    Determine the ice type based on stage
-
-    Parameters:
-    -----------
-    stage : int
-        Ice stage value
-
-    Returns:
-    --------
-    index_ : int
-        Ice type index:
-        0 - ice_free
-        1 - Young ice
-        2 - First year ice
-        3 - Multiyear ice
-    """
-
-    index_ = 0
-
-    if stage == 0:
-        index_ = 0
-    #print('ice_free')
-
-    if 81 <= stage < 86:
-        #print('Young ice')
-        index_=1
-    if 86 <= stage < 94:
-        #print('First year ice')
-        index_=2
-    if 95 <= stage < 98:
-        #print('multiyear ice')
-        index_=3
-    return index_
-
-def ice_type_map(polyindex_arr, icecodes):
-    """
-    Map ice type to polygons based on icecodes
-
-    Parameters:
-    -----------
-    polyindex_arr : numpy.ndarray
-        Array containing polygon indices
-    icecodes : numpy.ndarray
-        Array containing ice codes and stages
-
-    Returns:
-    --------
-    it_array : numpy.ndarray
-        Array containing ice type values for each polygon
-    """
-
-    it_array = np.zeros(polyindex_arr.shape, dtype=float)
-    it_array[:] = -1
-
-    polyids = np.unique(polyindex_arr)
-
-    for polyid in polyids:
-        mask = polyindex_arr == polyid
-        i = np.where(icecodes[:, 0] == polyid)[0]
-        if len(i) > 0:
-            ice = np.argmax([icecodes[i, 2], icecodes[i, 3], icecodes[i, 4]])
-            sod = [icecodes[i, 5], icecodes[i, 6], icecodes[i, 7]]
-            ice_type = SI_type(sod[ice])
-
-            it_array[mask] = ice_type
-    return it_array
+from validation_base import ValidationBase
+from sitacval import *
 
 
-class ValidationNIC_NERSC(ValidationNIC):
+class Validation_NIC_NERSC(ValidationBase):
     products = ['sod']
     max_value = {'sod': 3}
     dir_auto_format = '%Y/%m/s1_icetype_mosaic_%Y%m%d0600.nc'

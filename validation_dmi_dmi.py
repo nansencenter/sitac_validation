@@ -2,10 +2,10 @@ from cartopy.crs import NorthPolarStereo
 import numpy as np
 
 from sitacval import *
-from validate_on_nic_DMI import ValidationNIC_DMI, parse_and_run
+from validation_nic_dmi import Validation_NIC_DMI
 
 
-class ValidationDMI_DMI(ValidationNIC_DMI):
+class Validation_DMI_DMI(Validation_NIC_DMI):
     map_label_aut = 'DMI-auto'
     map_label_man = 'DMI-manual'
 
