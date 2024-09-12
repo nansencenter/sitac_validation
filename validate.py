@@ -11,6 +11,7 @@ from validation_dmi_dmi import Validation_DMI_DMI
 from validation_osisaf_dmi import Validation_OSISAF_DMI
 from validation_nic_nersc import Validation_NIC_NERSC
 
+# which classes to use for validation
 VALIDATION_CLASSES = {
         'NIC_DMI': Validation_NIC_DMI,
         'DMI_DMI': Validation_DMI_DMI,
@@ -19,6 +20,7 @@ VALIDATION_CLASSES = {
     }
 
 def parse():
+    """ Parse input arguments """
     parser = argparse.ArgumentParser()
     parser.add_argument("product", help="Name of product to validate", choices=['DMI', 'NERSC'])
     parser.add_argument("reference", help="Name of reference product", choices=['DMI', 'NIC', 'OSISAF'])
@@ -42,6 +44,7 @@ def parse():
     return args
 
 if __name__ == "__main__":
+    """ Parse arguments and run processing """
     args = parse()
     ValidationClass = VALIDATION_CLASSES[f'{args.reference}_{args.product}']
     v = ValidationClass(args.ref_dir, args.aut_dir, args.out_dir, args.cores, args.step)

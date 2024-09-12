@@ -27,6 +27,8 @@ class ValidationBase:
             Path to save the statistics.
         cores : int
             Number of cores to use in parallel
+        step : int
+            Subsampling of predicted ice chart
 
         """
         self.dir_man = dir_man
@@ -97,6 +99,13 @@ class ValidationBase:
         return aut_files
 
     def process_date(self, date):
+        """ Process one date:
+        * Load reference file (if exist)
+        * Load predicted files (if exist)
+        * Compute difference
+        * Compute and save stats
+        * Make maps
+        """
         print(f'Processing {date}')
         man_file = self.find_manual_file(date)
         if not os.path.exists(man_file):
@@ -132,6 +141,7 @@ class ValidationBase:
             p.map(self.process_date, daterange(start_date, end_date))
 
     def save_sod_stats(self, date, man_ice_chart, aut_ice_chart, mask):
+        """ Compute and save SoD stats """
         aut_sod = np.round(aut_ice_chart['sod'][mask['sod']]).astype(int)
         man_sod = np.round(man_ice_chart['sod'][mask['sod']]).astype(int)
         sod_stats = compute_sod_stats(man_sod, aut_sod, self.max_value['sod'])
@@ -141,12 +151,14 @@ class ValidationBase:
         print(f'    Save {os.path.basename(sod_stats_filename)}')
 
     def save_sic_stats(self, date, man_ice_chart, aut_ice_chart, mask):
+        """ Compute and save SIC stats """
         sic_stats = compute_sic_stats(man_ice_chart['sic'], aut_ice_chart['sic'], mask['sic'])
         sic_stats_filename = f'{self.dir_stats}/stats_sic_{date.strftime("%Y%m%d")}.npz'
         np.savez(sic_stats_filename, **sic_stats)
         print(f'    Save {os.path.basename(sic_stats_filename)}')
 
     def make_sod_maps(self, date, man_ice_chart, aut_ice_chart, diff, mask):
+        """ Make 3-panel SoD maps with predicted, reference and difference """
         fig, axs = plt.subplots(1, 3, figsize=(15, 5), sharey=True)
         plot_sod_map(man_ice_chart['sod'], aut_ice_chart['landmask'], axs[0], f'{self.map_label_man}-SoD, {date.strftime("%Y-%m-%d")}', self.labels)
         plot_sod_map(aut_ice_chart['sod'], aut_ice_chart['landmask'], axs[1], f'{self.map_label_aut}-SoD', self.labels, shrink=0)
@@ -157,6 +169,7 @@ class ValidationBase:
         print(f'    Save {os.path.basename(map_filename)}')
 
     def make_sic_maps(self, date, man_ice_chart, aut_ice_chart, diff, mask):
+        """ Make 3-panel SIC maps with predicted, reference and difference """
         fig, axs = plt.subplots(1, 3, figsize=(15, 5), sharey=True)
         plot_sic_map(man_ice_chart['sic'], aut_ice_chart['landmask'], axs[0], f'{self.map_label_man}-SIC, {date.strftime("%Y-%m-%d")}')
         plot_sic_map(aut_ice_chart['sic'], aut_ice_chart['landmask'], axs[1], f'{self.map_label_aut}-SIC', shrink=0)

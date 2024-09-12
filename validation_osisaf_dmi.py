@@ -32,6 +32,9 @@ class Validation_OSISAF_DMI(Validation_DMI_DMI):
             return []
 
     def get_aut_ice_chart(self, aut_files):
+        """ Get averaged predicted DMI ice chart from several input netDCF files
+        on grid of the OSISAF AMSR2 SIC """
+
         y_min, y_max, y_size = -5345000, 5845000,  1120
         man_y = np.linspace(y_max, y_min, y_size)
         x_min, x_max, x_size = -3845000, 3745000, 760
@@ -52,6 +55,7 @@ class Validation_OSISAF_DMI(Validation_DMI_DMI):
         }
 
     def get_man_ice_chart(self, man_file):
+        """ Get OSISAF SIC """
         with Dataset(man_file) as ds:
             sic_map = ds['ice_conc'][0, :, :]
         return {
@@ -59,6 +63,7 @@ class Validation_OSISAF_DMI(Validation_DMI_DMI):
         }
 
     def find_manual_file(self, date):
+        """ Find OSISAF AMSR2 SIC files"""
         shapefile = f'{self.dir_man}/ice_conc_nh_polstere-100_amsr2_{date.strftime("%Y%m%d")}1200.nc'
         return shapefile
 

@@ -10,6 +10,7 @@ class Validation_DMI_DMI(Validation_NIC_DMI):
     map_label_man = 'DMI-manual'
 
     def get_aut_ice_chart(self, aut_files):
+        """ Get averaged SIC and SOD from predicted ice chart on the grid of manual DMI ice chart """
         aut_ice_chart = super().get_aut_ice_chart(aut_files)
         # MAN ICE CHART
         #		crs:proj4_string = " +proj=stere +lon_0=-45 +lat_ts=90 +lat_0=90 +a=6371000 +b=6371000" ;
@@ -40,6 +41,7 @@ class Validation_DMI_DMI(Validation_NIC_DMI):
         }
 
     def get_man_ice_chart(self, man_file):
+        """ Get SIC and SOD from manual DMI ice chart """
         ice_type_maping = get_ice_type_mapping()
         ct,ca,sa,cb,sb,cc,sc,ice_poly_id_grid = get_man_file(man_file)
         cam, cbm, ccm = correct_ca_cb_cc(ct, np.array(ca), np.array(cb), np.array(cc))
@@ -52,5 +54,6 @@ class Validation_DMI_DMI(Validation_NIC_DMI):
         }
 
     def find_manual_file(self, date):
+        """ Find netCDF with DMI ice chart """
         man_file = date.strftime(f'{self.dir_man}/%Y/%m/ice_conc_overview_greenland_%Y%m%d1200.nc')
         return man_file

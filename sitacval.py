@@ -161,6 +161,18 @@ def get_gdal_dataset(x_ul, nx, dx, y_ul, ny, dy, srs_proj4, dtype=gdal.GDT_Float
     return dst_ds
 
 def compute_sod_stats(man_pixels, aut_pixels, max_val):
+    """ Compute statistics for SoD
+    Input:
+    man_pixels: 1D numpy.array
+        Reference values of SoD, valid pixels only
+    aut_pixels: 1D numpy.array
+        Predicted values of SoD, valid pixels only. Mathcing man_pixels.
+    max_val: int
+        How many classes we have
+
+    Returns:
+        dictionary with various metric for overall and per-class performance
+    """
     # Calculate classification report
     report = skm.classification_report(man_pixels, aut_pixels, digits=3, output_dict=True)
 
@@ -199,6 +211,7 @@ def compute_sod_stats(man_pixels, aut_pixels, max_val):
     }
 
 def get_dmi_dataset(step=10):
+    """ Create GDAL dataset matching the shape and georeference of the DMI auto-ice chart """
     srs = "+proj=stere +lat_0=90 +lat_ts=70 +lon_0=-45 +x_0=0 +y_0=0 +a=6378273 +b=6356889.449 +units=m +no_defs"
     x_ul = -3849750.0
     y_ul = 5849750.0
@@ -209,6 +222,7 @@ def get_dmi_dataset(step=10):
     return get_gdal_dataset(x_ul, nx, dx, y_ul, ny, dy, srs, gdal.GDT_Int16)
 
 def get_ice_type_mapping():
+    """ Mapping from SIGRID SoD to few ice types """
     ice_type_maping = np.zeros(100, int)
     # water
     ice_type_maping[0] = 1
@@ -235,6 +249,7 @@ def get_ice_type_mapping():
     return ice_type_maping
 
 def get_ct_ca_cb_cc(icecodes):
+    """ Collect and correct vectors of partial concentrations from NIC icecodes """
     CT, CA, CB, CC = icecodes[:, 1:5].T.astype(int)
     CT[CT > 90] = 100
     CA[CA == -9] = CT[CA == -9]
@@ -243,6 +258,7 @@ def get_ct_ca_cb_cc(icecodes):
     return CT, CA, CB, CC
 
 def get_sa_sb_sc(icecodes, ice_type_maping):
+    """ Collect and correct vectors of SoDs NIC icecodes """
     SA_SB_SC = []
     for i in [5, 6, 7]:
         icecodes_S = icecodes[:, i].astype(int)
@@ -252,6 +268,7 @@ def get_sa_sb_sc(icecodes, ice_type_maping):
     return SA_SB_SC
 
 def get_ice_type_fractions_nic(icecodes, CA, CB, CC, SA, SB, SC):
+    """ Compute total fraction of selected ice types """
     ice_type_fractions = np.zeros((len(icecodes), 7))
     ice_type_fractions[range(len(icecodes)), SA] += CA
     ice_type_fractions[range(len(icecodes)), SB] += CB
@@ -260,6 +277,8 @@ def get_ice_type_fractions_nic(icecodes, CA, CB, CC, SA, SB, SC):
     return ice_type_fractions
 
 def get_sod_sic_maps_nic(polyindex_arr, icecodes, ice_type_fractions, CT):
+    """ Get 2D maps of SoD and SIC from 2D matrix with polygon ids
+    and 1D arrays of ice type fractions """
     icecodes_i = icecodes[:, 0].astype(int)
     sod_poly = np.zeros(polyindex_arr.max() + 1)
     sod_poly[icecodes_i] = np.argmax(ice_type_fractions, axis=1)
@@ -271,6 +290,7 @@ def get_sod_sic_maps_nic(polyindex_arr, icecodes, ice_type_fractions, CT):
     return sod_map, sic_map
 
 def read_nic_icechart(nic_file, step):
+    """ Rasterize SoD and SIC ice charts from NIC """
     ds = get_dmi_dataset(step)
     polyindex_arr, icecodes = rasterize_icehart(nic_file, ds)
     ice_type_maping = get_ice_type_mapping()
@@ -281,6 +301,7 @@ def read_nic_icechart(nic_file, step):
     return sod_nic, sic_nic
 
 def read_dmi_ice_chart(dmi_file, step):
+    """ Read DMI automatic ice chart with sub-sampling """
     with Dataset(dmi_file) as ds:
         sod_dmi = ds['sod'][0, ::step, ::step].astype(float).filled(np.nan)
         sic_dmi = ds['sic'][0, ::step, ::step].astype(float).filled(np.nan)
@@ -291,6 +312,7 @@ def read_dmi_ice_chart(dmi_file, step):
     return sod_dmi, sic_dmi, lnd_dmi, xc, yc
 
 def plot_difference(diff_array, mask_common, land_mask, ax, title, shrink=0.5, factor=1.):
+    """ Plot a map of difference of SIC or SoD on a nice map """
     cowa = cm.get_cmap('coolwarm', 7)
     coolwarm_colors = [colors.rgb2hex(cowa(i)) for i in range(0, cowa.N)]
     cmap_diff = plt.cm.colors.ListedColormap(['gray', 'white'] + coolwarm_colors)
@@ -306,6 +328,7 @@ def plot_difference(diff_array, mask_common, land_mask, ax, title, shrink=0.5, f
     ax.set_title(title)
 
 def plot_sod_map(sod_array, land_mask, ax, title, labels, shrink=0.5):
+    """ Plot SoD map with nice colormaps """
     map_array = np.array(sod_array)
     map_array[sod_array < 0] = -2
     map_array[np.isnan(sod_array)] = -2
@@ -320,6 +343,7 @@ def plot_sod_map(sod_array, land_mask, ax, title, labels, shrink=0.5):
     ax.set_title(title)
 
 def plot_sic_map(sic_array, land_mask, ax, title, shrink=0.5):
+    """ Plot SIC map with nice colormaps """
     map_array = np.array(sic_array)
     map_array[np.isnan(map_array)] = -1
     map_array[land_mask] = -2
@@ -332,6 +356,20 @@ def plot_sic_map(sic_array, land_mask, ax, title, shrink=0.5):
     ax.set_title(title)
 
 def compute_sic_stats(man_sic, aut_sic, mask_sic):
+    """ Compute statistics of SIC
+    Input:
+    man_sic: 2D numpy.array
+        Full size matrix with reference SIC
+    aut_sic: 2D numpy.array
+        Full size matrix with predicted SIC (same size as man_sic)
+    mask_sic: 2D numpy.array
+        Full size matrix with valid pixels
+
+    Returns:
+    dict with Pearson correlation, bias, RMSE and debiased RMSE
+    These are computed either for all pixels from predicted map (SIC All)
+    or for pixels averaged over reference SIC bins.
+    """
     man_sic_ = man_sic[mask_sic]
     aut_sic_ = aut_sic[mask_sic]
 
@@ -361,6 +399,7 @@ def compute_sic_stats(man_sic, aut_sic, mask_sic):
 
 # DMI reference ice chart
 def get_man_file(path):
+    """ Read data from DMI automatic weekly ice charts in netCDF file """
     with Dataset(path) as ds:
         ct = ds['CT'][0].astype(int).filled(0)
         ca = ds['CA'][0].astype(int).filled(0)
@@ -374,6 +413,7 @@ def get_man_file(path):
     return ct,ca,sa,cb,sb,cc,sc,ice_poly_id_grid
 
 def get_ice_type_fractions_dmi(icecodes, CA, CB, CC, SA, SB, SC):
+    """ Convert fractions and SoDs from SIGRID codes to fractions of selected ice types """
     ice_type_fractions = np.zeros((len(icecodes), 7))
     ice_type_fractions[range(len(icecodes)), SA] += CA
     ice_type_fractions[range(len(icecodes)), SB] += CB
@@ -382,12 +422,14 @@ def get_ice_type_fractions_dmi(icecodes, CA, CB, CC, SA, SB, SC):
     return ice_type_fractions
 
 def correct_ca_cb_cc(CT, CA, CB, CC):
+    """ Correct fractions from DMI """
     CA[CA == -9] = CT[CA == -9]
     CB[CB == -9] = 0
     CC[CC == -9] = 0
     return CA, CB, CC
 
 def correct_sa_sb_sc(SA, SB, SC, ice_type_maping):
+    """ Correct SoDs from DMI """
     SA_SB_SC = []
     for s in [SA, SB, SC]:
         s[s  == -9] = 99
@@ -395,6 +437,8 @@ def correct_sa_sb_sc(SA, SB, SC, ice_type_maping):
     return SA_SB_SC
 
 def get_sod_sic_maps_dmi(ice_type_fractions, ice_poly_id_grid, ct):
+    """ Convert 2D map of polygon IDs and 1D arrays with SoD fractions and CT
+    into 2D maps of SoD and SIC """
     sod = np.argmax(ice_type_fractions, axis=1)
     ice_poly_id_grid_int = ice_poly_id_grid.filled(0).astype(int)
     sic_map = ct[ice_poly_id_grid_int].astype(float)
@@ -404,6 +448,7 @@ def get_sod_sic_maps_dmi(ice_type_fractions, ice_poly_id_grid, ct):
     return sod_map, sic_map
 
 def reproject(src_crs, src_x, src_y, src_arrays, dst_crs, dst_x, dst_y):
+    """ Collocate the predicted DMI ice chart with the reference DMI icechart """
     dst_x_grd, dst_y_grd = np.meshgrid(dst_x, dst_y)
     dst_x_grd_pro, dst_y_grd_pro, _ = src_crs.transform_points(dst_crs, dst_x_grd.flatten(), dst_y_grd.flatten()).T
     dst_arrays = []
