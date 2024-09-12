@@ -97,16 +97,16 @@ class ValidationBase:
         return aut_files
 
     def process_date(self, date):
+        print(f'Processing {date}')
         man_file = self.find_manual_file(date)
         if not os.path.exists(man_file):
-            print(f'No manual {man_file} file for', date)
+            print(f'    No reference file {os.path.basename(man_file)}')
             return
 
         aut_files = self.week_auto_files(date)
         if len(aut_files) == 0:
-            print('No auto files for ', date, man_file)
+            print('    No auto files')
             return
-        print('Processing ', date, man_file)
         aut_ice_chart = self.get_aut_ice_chart(aut_files)
         man_ice_chart = self.get_man_ice_chart(man_file)
 
@@ -114,10 +114,6 @@ class ValidationBase:
 
         self.save_stats(date, man_ice_chart, aut_ice_chart, mask)
         self.make_maps(date, man_ice_chart, aut_ice_chart, diff, mask)
-
-    def find_manual_file(self, date):
-        shapefile = f'{self.dir_man}/arctic{date.strftime("%y%m%d")}/ARCTIC{date.strftime("%y%m%d")}.shp'
-        return shapefile
 
     def process_date_range(self, start_date, end_date, ):
         """
@@ -142,13 +138,13 @@ class ValidationBase:
         sod_stats['labels'] = self.labels
         sod_stats_filename = f'{self.dir_stats}/stats_sod_{date.strftime("%Y%m%d")}.npz'
         np.savez(sod_stats_filename, **sod_stats)
-        print(sod_stats_filename)
+        print(f'    Save {os.path.basename(sod_stats_filename)}')
 
     def save_sic_stats(self, date, man_ice_chart, aut_ice_chart, mask):
         sic_stats = compute_sic_stats(man_ice_chart['sic'], aut_ice_chart['sic'], mask['sic'])
         sic_stats_filename = f'{self.dir_stats}/stats_sic_{date.strftime("%Y%m%d")}.npz'
         np.savez(sic_stats_filename, **sic_stats)
-        print(sic_stats_filename)
+        print(f'    Save {os.path.basename(sic_stats_filename)}')
 
     def make_sod_maps(self, date, man_ice_chart, aut_ice_chart, diff, mask):
         fig, axs = plt.subplots(1, 3, figsize=(15, 5), sharey=True)
@@ -158,7 +154,7 @@ class ValidationBase:
         map_filename = f'{self.dir_stats}/map_sod_{date.strftime("%Y%m%d")}.png'
         plt.savefig(map_filename, dpi=300, bbox_inches='tight')
         plt.close()
-        print(map_filename)
+        print(f'    Save {os.path.basename(map_filename)}')
 
     def make_sic_maps(self, date, man_ice_chart, aut_ice_chart, diff, mask):
         fig, axs = plt.subplots(1, 3, figsize=(15, 5), sharey=True)
@@ -168,4 +164,4 @@ class ValidationBase:
         map_filename = f'{self.dir_stats}/map_sic_{date.strftime("%Y%m%d")}.png'
         plt.savefig(map_filename, dpi=300, bbox_inches='tight')
         plt.close()
-        print(map_filename)
+        print(f'    Save {os.path.basename(map_filename)}')

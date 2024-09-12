@@ -166,26 +166,15 @@ def compute_sod_stats(man_pixels, aut_pixels, max_val):
 
     # Extract metrics from the report
     accuracy = report['accuracy']
-    macro_avg_p = report['macro avg']['precision']
-    macro_avg_r = report['macro avg']['recall']
-    macro_avg_f = report['macro avg']['f1-score']
-
-    weighted_avg_p = report['weighted avg']['precision']
-    weighted_avg_r = report['weighted avg']['recall']
-    weighted_avg_f = report['weighted avg']['f1-score']
+    precision = report['macro avg']['precision']
+    recall = report['macro avg']['recall']
+    f1_score = report['macro avg']['f1-score']
 
     # Confusion matrix
     matrix = skm.confusion_matrix(man_pixels, aut_pixels, labels=range(max_val+1))
     matrix = np.where(matrix == 0, np.nan, matrix)
 
-    # Jaccard score
-    jaccard_labels = skm.jaccard_score(man_pixels, aut_pixels, average=None)
-    jaccard_avg = skm.jaccard_score(man_pixels, aut_pixels, average='weighted')
-
-    # Cohen's kappa
-    kappa = skm.cohen_kappa_score(man_pixels, aut_pixels)
-
-    # Precision, recall, fscore, support
+    # Precision, recall, fscore, support for each class
     p, r, f, s = skm.precision_recall_fscore_support(
         man_pixels,
         aut_pixels,
@@ -194,50 +183,20 @@ def compute_sod_stats(man_pixels, aut_pixels, max_val):
     )
     p, r, f, s = [np.where(j == 0, np.nan, j) for j in [p, r, f, s]]
 
-
-    # Matthews correlation coefficient
-    mcc = skm.matthews_corrcoef(man_pixels, aut_pixels)
-
-    # Hamming loss
-    hloss = skm.hamming_loss(man_pixels, aut_pixels)
-
-    # Balanced accuracy
-    b_acc = skm.balanced_accuracy_score(man_pixels, aut_pixels)
-
-    ## Count pixels in comparison, manual, and automatic images
-    total_man = [np.count_nonzero(man_pixels == i) for i in range(max_val+1)]
-    total_aut = [np.count_nonzero(aut_pixels == i) for i in range(max_val+1)]
-    total = [np.count_nonzero((aut_pixels - man_pixels) == i) for i in range(-max_val, max_val+1)]
-
     # Prepare result dictionary
-    result = dict(
-        accuracy = accuracy,
-        macro_precision = macro_avg_p,
-        macro_recall = macro_avg_r,
-        macro_f1_score = macro_avg_f,
-        weighted_precision = weighted_avg_p,
-        weighted_recall = weighted_avg_r,
-        weighted_f1_score = weighted_avg_f,
+    return {
+        'SOD accuracy': accuracy,
+        'SOD precision': precision,
+        'SOD recall': recall,
+        'SOD f1-score': f1_score,
 
-        precision = p,
-        recall = r,
-        fscore = f,
-        support = s,
+        'precision': p,
+        'recall': r,
+        'fscore': f,
+        'support': s,
 
-        jaccard_labels = jaccard_labels,
-        total = total,
-        total_man = total_man,
-        total_aut = total_aut,
-
-        balanced_accuracy_score = b_acc,
-        hamming_loss = hloss,
-        cohen_kappa_score = kappa,
-        jaccard_avg = jaccard_avg,
-        matthews_corrcoef = mcc,
-
-        matrix = matrix,
-    )
-    return result
+        'matrix': matrix,
+    }
 
 def get_dmi_dataset(step=10):
     srs = "+proj=stere +lat_0=90 +lat_ts=70 +lon_0=-45 +x_0=0 +y_0=0 +a=6378273 +b=6356889.449 +units=m +no_defs"
@@ -277,6 +236,7 @@ def get_ice_type_mapping():
 
 def get_ct_ca_cb_cc(icecodes):
     CT, CA, CB, CC = icecodes[:, 1:5].T.astype(int)
+    CT[CT > 90] = 100
     CA[CA == -9] = CT[CA == -9]
     CB[CB == -9] = 0
     CC[CC == -9] = 0
@@ -303,10 +263,10 @@ def get_sod_sic_maps_nic(polyindex_arr, icecodes, ice_type_fractions, CT):
     icecodes_i = icecodes[:, 0].astype(int)
     sod_poly = np.zeros(polyindex_arr.max() + 1)
     sod_poly[icecodes_i] = np.argmax(ice_type_fractions, axis=1)
-    sod_map = sod_poly[polyindex_arr] - 1
+    sod_map = sod_poly[polyindex_arr] - 2
 
     sic_poly = np.zeros(polyindex_arr.max() + 1) - 1
-    sic_poly[icecodes_i] = CT #ice_type_fractions[:, 1]
+    sic_poly[icecodes_i] = CT
     sic_map = sic_poly[polyindex_arr]
     return sod_map, sic_map
 
@@ -322,17 +282,12 @@ def read_nic_icechart(nic_file, step):
 
 def read_dmi_ice_chart(dmi_file, step):
     with Dataset(dmi_file) as ds:
-        sod_dmi = ds['sod'][0, ::step, ::step].astype(float).filled(np.nan) + 1
+        sod_dmi = ds['sod'][0, ::step, ::step].astype(float).filled(np.nan)
         sic_dmi = ds['sic'][0, ::step, ::step].astype(float).filled(np.nan)
         flg_dmi = ds['status_flag'][0, ::step, ::step]
         xc = ds['xc'][::step]
         yc = ds['yc'][::step]
-
-    lnd_dmi = (flg_dmi & 64) > 0
-    sic_dmi[lnd_dmi] = -1
-    sod_dmi[sic_dmi < 15] = 0
-    sod_dmi[lnd_dmi] = -1
-
+    lnd_dmi = (flg_dmi & 1) > 0
     return sod_dmi, sic_dmi, lnd_dmi, xc, yc
 
 def plot_difference(diff_array, mask_common, land_mask, ax, title, shrink=0.5, factor=1.):
@@ -352,14 +307,16 @@ def plot_difference(diff_array, mask_common, land_mask, ax, title, shrink=0.5, f
 
 def plot_sod_map(sod_array, land_mask, ax, title, labels, shrink=0.5):
     map_array = np.array(sod_array)
-    map_array[np.isnan(map_array)] = -2
+    map_array[sod_array < 0] = -2
+    map_array[np.isnan(sod_array)] = -2
     map_array[land_mask] = -1
-    cmap_hugo = plt.cm.colors.ListedColormap(['white', '#bbb', '#0064ff', '#aa28f0', '#ffff00', '#ca0', '#e54', '#500'])
+    #cmap_hugo = plt.cm.colors.ListedColormap(['white', '#bbb', '#aa28f0', '#ffff00', '#ca0', '#e54', '#500'])
+    cmap_hugo = plt.cm.colors.ListedColormap(['white', 'gray', '#aa28f0', '#ffff00', '#ca0', '#e54', '#500'])
 
-    im10 = ax.imshow(map_array, interpolation='nearest', cmap=cmap_hugo, clim=[-2, 5])
+    im10 = ax.imshow(map_array, interpolation='nearest', cmap=cmap_hugo, clim=[-2, 4])
     if shrink > 0:
         cbar = plt.colorbar(im10, ax=ax, shrink=shrink)
-        cbar.ax.yaxis.set_ticks(np.linspace(-1.5, 4.5, 8), ['No Data', 'Land'] + labels)
+        cbar.ax.yaxis.set_ticks(np.linspace(-1.5, 3.5, 7), ['No Data', 'Land'] + labels)
     ax.set_title(title)
 
 def plot_sic_map(sic_array, land_mask, ax, title, shrink=0.5):
@@ -367,7 +324,8 @@ def plot_sic_map(sic_array, land_mask, ax, title, shrink=0.5):
     map_array[np.isnan(map_array)] = -1
     map_array[land_mask] = -2
     ice_colors = [colors.rgb2hex(i) for i in cmo.ice.resampled(101)(np.arange(0, 101))]
-    sic_cmap = plt.cm.colors.ListedColormap(['#ccb', '#ffe'] + ice_colors)
+    #sic_cmap = plt.cm.colors.ListedColormap(['#ccb', '#ffe'] + ice_colors)
+    sic_cmap = plt.cm.colors.ListedColormap(['gray', 'white'] + ice_colors)
     im10 = ax.imshow(map_array, interpolation='nearest', cmap=sic_cmap, clim=[-2, 100])
     if shrink > 0:
         cbar = plt.colorbar(im10, ax=ax, shrink=shrink)
@@ -387,9 +345,18 @@ def compute_sic_stats(man_sic, aut_sic, mask_sic):
 
     aut_sic_avgs = np.array(aut_sic_avgs)
     aut_sic_stds = np.array(aut_sic_stds)
+    diff_all = aut_sic_ - man_sic_
+    diff_avg = aut_sic_avgs - man_sic_bins
+
     return {
-        'all_sic_pearsonr': pearsonr(man_sic_, aut_sic_)[0],
-        'avg_sic_pearsonr': pearsonr(man_sic_bins, aut_sic_avgs)[0],
+        'SIC All Pearson': pearsonr(man_sic_, aut_sic_)[0],
+        'SIC Avg Pearson': pearsonr(man_sic_bins, aut_sic_avgs)[0],
+        'SIC All Bias': diff_all.mean(),
+        'SIC Avg Bias': diff_avg.mean(),
+        'SIC All RMSE': (diff_all**2).mean()**0.5,
+        'SIC Avg RMSE': (diff_avg**2).mean()**0.5,
+        'SIC All DRMSE': ((diff_all - diff_all.mean())**2).mean()**0.5,
+        'SIC Avg DRMSE': ((diff_all - diff_avg.mean())**2).mean()**0.5,
     }
 
 # DMI reference ice chart
@@ -403,6 +370,7 @@ def get_man_file(path):
         sb = ds['SB'][0].astype(int).filled(0)
         sc = ds['SC'][0].astype(int).filled(0)
         ice_poly_id_grid = ds['ice_poly_id_grid'][0, ::-1]
+    ct[ct > 90] = 100
     return ct,ca,sa,cb,sb,cc,sc,ice_poly_id_grid
 
 def get_ice_type_fractions_dmi(icecodes, CA, CB, CC, SA, SB, SC):
@@ -431,7 +399,7 @@ def get_sod_sic_maps_dmi(ice_type_fractions, ice_poly_id_grid, ct):
     ice_poly_id_grid_int = ice_poly_id_grid.filled(0).astype(int)
     sic_map = ct[ice_poly_id_grid_int].astype(float)
     sic_map[ice_poly_id_grid.mask] = np.nan
-    sod_map = sod[ice_poly_id_grid_int].astype(float) - 1
+    sod_map = sod[ice_poly_id_grid_int].astype(float) - 2
     sod_map[ice_poly_id_grid.mask] = np.nan
     return sod_map, sic_map
 
@@ -469,16 +437,12 @@ def SI_type(stage):
 
     if stage == 0:
         index_ = 0
-    #print('ice_free')
 
     if 81 <= stage < 86:
-        #print('Young ice')
         index_=1
     if 86 <= stage < 94:
-        #print('First year ice')
         index_=2
     if 95 <= stage < 98:
-        #print('multiyear ice')
         index_=3
     return index_
 

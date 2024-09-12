@@ -99,7 +99,7 @@ class Validation_NIC_NERSC(ValidationBase):
         stats['labels'] = self.labels
         stats_filename = f'{self.dir_stats}/stats_{date.strftime("%Y%m%d")}.npz'
         np.savez(stats_filename, **stats)
-        print(stats_filename)
+        print('    Save', os.path.basename(stats_filename))
 
     def image_render(self, date, man2aut, res_man, res_aut, land_mask, mask_diff):
         """
@@ -194,7 +194,7 @@ class Validation_NIC_NERSC(ValidationBase):
         map_filename = f'{self.dir_stats}/map_{date.strftime("%Y%m%d")}.png'
         plt.savefig(map_filename, dpi=300, bbox_inches='tight')
         plt.close()
-        print(map_filename)
+        print('    Save', os.path.basename(map_filename))
 
     def make_maps(self, date, man_ice_chart, aut_ice_chart, diff, mask):
         self.image_render(date, diff['sod'], man_ice_chart['sod'], aut_ice_chart['sod'], aut_ice_chart['landmask'], mask['sod'])

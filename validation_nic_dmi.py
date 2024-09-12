@@ -7,10 +7,9 @@ from validation_base import ValidationBase
 
 class Validation_NIC_DMI(ValidationBase):
     products = ['sod', 'sic']
-    max_value = {'sod': 5, 'sic': 100}
+    max_value = {'sod': 4, 'sic': 100}
     dir_auto_format = 'dmi_asip_seaice_mosaic_arc_l3_%Y%m%d.nc'
     labels = [
-        "Ice Free",
         "Young Ice",
         "Thin FY Ice",
         "Thick FY Ice",
@@ -20,10 +19,13 @@ class Validation_NIC_DMI(ValidationBase):
     map_label_aut = 'DMI-auto'
     map_label_man = 'NIC-manual'
 
+    def find_manual_file(self, date):
+        shapefile = f'{self.dir_man}/arctic{date.strftime("%y%m%d")}/ARCTIC{date.strftime("%y%m%d")}.shp'
+        return shapefile
+
     def get_aut_ice_chart(self, aut_files):
         sods, sics =[], []
         for aut_file in aut_files:
-            print('Reading automatic ice chart from ', aut_file)
             sod_dmi, sic_dmi, lnd_dmi, xc, yc = read_dmi_ice_chart(aut_file, self.step)
             sods.append(sod_dmi)
             sics.append(sic_dmi)
