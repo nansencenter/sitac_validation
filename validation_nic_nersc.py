@@ -18,12 +18,14 @@ class Validation_NIC_NERSC(ValidationBase):
     products = ['sod']
     max_value = {'sod': 3}
     dir_auto_format = '%Y/%m/s1_icetype_mosaic_%Y%m%d0600.nc'
-    labels = [
-        "Ice Free",
-        "Young Ice",
-        "First-Year Ice",
-        "Multi-Year Ice",
-    ]
+    labels = {
+        'sod':[
+            "Ice Free",
+            "Young Ice",
+            "First-Year Ice",
+            "Multi-Year Ice",
+        ]
+    }
 
     def get_man_ice_chart(self, shapefile):
             # Define raster parameters

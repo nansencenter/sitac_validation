@@ -11,6 +11,7 @@ from sitacval import (
     compute_sic_stats,
     plot_sod_map,
     plot_sic_map,
+    plot_flz_map,
     plot_difference,
 )
 
@@ -140,13 +141,13 @@ class ValidationBase:
         with Pool(self.cores) as p:
             p.map(self.process_date, daterange(start_date, end_date))
 
-    def save_sod_stats(self, date, man_ice_chart, aut_ice_chart, mask):
+    def save_sod_stats(self, date, man_ice_chart, aut_ice_chart, mask, name):
         """ Compute and save SoD stats """
-        aut_sod = np.round(aut_ice_chart['sod'][mask['sod']]).astype(int)
-        man_sod = np.round(man_ice_chart['sod'][mask['sod']]).astype(int)
-        sod_stats = compute_sod_stats(man_sod, aut_sod, self.max_value['sod'])
-        sod_stats['labels'] = self.labels
-        sod_stats_filename = f'{self.dir_stats}/stats_sod_{date.strftime("%Y%m%d")}.npz'
+        aut_sod = np.round(aut_ice_chart[name][mask[name]]).astype(int)
+        man_sod = np.round(man_ice_chart[name][mask[name]]).astype(int)
+        sod_stats = compute_sod_stats(man_sod, aut_sod, self.max_value[name], name)
+        sod_stats['labels'] = self.labels[name]
+        sod_stats_filename = f'{self.dir_stats}/stats_{name}_{date.strftime("%Y%m%d")}.npz'
         np.savez(sod_stats_filename, **sod_stats)
         print(f'    Save {os.path.basename(sod_stats_filename)}')
 
@@ -157,17 +158,6 @@ class ValidationBase:
         np.savez(sic_stats_filename, **sic_stats)
         print(f'    Save {os.path.basename(sic_stats_filename)}')
 
-    def make_sod_maps(self, date, man_ice_chart, aut_ice_chart, diff, mask):
-        """ Make 3-panel SoD maps with predicted, reference and difference """
-        fig, axs = plt.subplots(1, 3, figsize=(15, 5), sharey=True)
-        plot_sod_map(man_ice_chart['sod'], aut_ice_chart['landmask'], axs[0], f'{self.map_label_man}-SoD, {date.strftime("%Y-%m-%d")}', self.labels)
-        plot_sod_map(aut_ice_chart['sod'], aut_ice_chart['landmask'], axs[1], f'{self.map_label_aut}-SoD', self.labels, shrink=0)
-        plot_difference(diff['sod'], mask['sod'], aut_ice_chart['landmask'], axs[2], 'Difference')
-        map_filename = f'{self.dir_stats}/map_sod_{date.strftime("%Y%m%d")}.png'
-        plt.savefig(map_filename, dpi=300, bbox_inches='tight')
-        plt.close()
-        print(f'    Save {os.path.basename(map_filename)}')
-
     def make_sic_maps(self, date, man_ice_chart, aut_ice_chart, diff, mask):
         """ Make 3-panel SIC maps with predicted, reference and difference """
         fig, axs = plt.subplots(1, 3, figsize=(15, 5), sharey=True)
@@ -175,6 +165,28 @@ class ValidationBase:
         plot_sic_map(aut_ice_chart['sic'], aut_ice_chart['landmask'], axs[1], f'{self.map_label_aut}-SIC', shrink=0)
         plot_difference(diff['sic'], mask['sic'], aut_ice_chart['landmask'], axs[2], 'Difference', factor=10)
         map_filename = f'{self.dir_stats}/map_sic_{date.strftime("%Y%m%d")}.png'
+        plt.savefig(map_filename, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f'    Save {os.path.basename(map_filename)}')
+
+    def make_sod_maps(self, date, man_ice_chart, aut_ice_chart, diff, mask):
+        """ Make 3-panel SoD maps with predicted, reference and difference """
+        fig, axs = plt.subplots(1, 3, figsize=(15, 5), sharey=True)
+        plot_sod_map(man_ice_chart['sod'], aut_ice_chart['landmask'], axs[0], f'{self.map_label_man}-SoD, {date.strftime("%Y-%m-%d")}', self.labels)
+        plot_sod_map(aut_ice_chart['sod'], aut_ice_chart['landmask'], axs[1], f'{self.map_label_aut}-SoD', self.labels['sod'], shrink=0)
+        plot_difference(diff['sod'], mask['sod'], aut_ice_chart['landmask'], axs[2], 'Difference')
+        map_filename = f'{self.dir_stats}/map_sod_{date.strftime("%Y%m%d")}.png'
+        plt.savefig(map_filename, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f'    Save {os.path.basename(map_filename)}')
+
+    def make_flz_maps(self, date, man_ice_chart, aut_ice_chart, diff, mask):
+        """ Make 3-panel FLZ maps with predicted, reference and difference """
+        fig, axs = plt.subplots(1, 3, figsize=(15, 5), sharey=True)
+        plot_flz_map(man_ice_chart['flz'], aut_ice_chart['landmask'], axs[0], f'{self.map_label_man}-FLZ, {date.strftime("%Y-%m-%d")}', self.labels)
+        plot_flz_map(aut_ice_chart['flz'], aut_ice_chart['landmask'], axs[1], f'{self.map_label_aut}-FLZ', self.labels['flz'], shrink=0)
+        plot_difference(diff['flz'], mask['flz'], aut_ice_chart['landmask'], axs[2], 'Difference')
+        map_filename = f'{self.dir_stats}/map_flz_{date.strftime("%Y%m%d")}.png'
         plt.savefig(map_filename, dpi=300, bbox_inches='tight')
         plt.close()
         print(f'    Save {os.path.basename(map_filename)}')

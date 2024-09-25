@@ -160,7 +160,7 @@ def get_gdal_dataset(x_ul, nx, dx, y_ul, ny, dy, srs_proj4, dtype=gdal.GDT_Float
 
     return dst_ds
 
-def compute_sod_stats(man_pixels, aut_pixels, max_val):
+def compute_sod_stats(man_pixels, aut_pixels, max_val, name):
     """ Compute statistics for SoD
     Input:
     man_pixels: 1D numpy.array
@@ -197,10 +197,10 @@ def compute_sod_stats(man_pixels, aut_pixels, max_val):
 
     # Prepare result dictionary
     return {
-        'SOD accuracy': accuracy,
-        'SOD precision': precision,
-        'SOD recall': recall,
-        'SOD f1-score': f1_score,
+        f'{name.upper()} accuracy': accuracy,
+        f'{name.upper()} precision': precision,
+        f'{name.upper()} recall': recall,
+        f'{name.upper()} f1-score': f1_score,
 
         'precision': p,
         'recall': r,
@@ -247,6 +247,34 @@ def get_ice_type_mapping():
     #4 - Glacier Ice (98)
     ice_type_maping[98] = 6
     return ice_type_maping
+
+def get_floe_size_mapping():
+    """ Mapping from SIGRID Floe Size to few ice types """
+    floe_size_maping = np.zeros(100, int)
+    # FS in DMI pan-Arctic
+    # 0: < 100
+    # 1: 100 - 500
+    # 2: 500 - 2000
+    # 3: > 2000
+
+    # Floe size category IDs
+    # 0: Small Floes (<100 cm)
+    floe_size_maping[0] = 2 # 00, Pancake Ice, 30 cm – 3 m
+    floe_size_maping[1] = 2 # 01, Shuga / Small Ice Cake, Brash Ice, < 2 m across
+    floe_size_maping[2] = 2 # 02, Ice Cake, < 20
+    floe_size_maping[3] = 2 # 03, Small Floe, 20 – 100 m across
+
+    # 1: Medium Floes (100 m - 500 m)
+    floe_size_maping[4] = 3 # 04, Medium Floe, 100 – 500 m across
+
+    # 2: Big Floes (500 m - 2 km)
+    floe_size_maping[5] = 4 # 05, Big Floe, 500 m – 2 km across
+
+    #3: Vast and Giant Floes (>2 km)
+    floe_size_maping[6] = 5 # 06, Vast Floe, 2 – 10 km across
+    floe_size_maping[7] = 5 # 07, Giant Floe, > 10 km across
+
+    return floe_size_maping
 
 def get_ct_ca_cb_cc(icecodes):
     """ Collect and correct vectors of partial concentrations from NIC icecodes """
@@ -303,13 +331,14 @@ def read_nic_icechart(nic_file, step):
 def read_dmi_ice_chart(dmi_file, step):
     """ Read DMI automatic ice chart with sub-sampling """
     with Dataset(dmi_file) as ds:
-        sod_dmi = ds['sod'][0, ::step, ::step].astype(float).filled(np.nan)
         sic_dmi = ds['sic'][0, ::step, ::step].astype(float).filled(np.nan)
+        sod_dmi = ds['sod'][0, ::step, ::step].astype(float).filled(np.nan)
+        flz_dmi = ds['flz'][0, ::step, ::step].astype(float).filled(np.nan)
         flg_dmi = ds['status_flag'][0, ::step, ::step]
         xc = ds['xc'][::step]
         yc = ds['yc'][::step]
     lnd_dmi = (flg_dmi & 1) > 0
-    return sod_dmi, sic_dmi, lnd_dmi, xc, yc
+    return sic_dmi, sod_dmi, flz_dmi, lnd_dmi, xc, yc
 
 def plot_difference(diff_array, mask_common, land_mask, ax, title, shrink=0.5, factor=1.):
     """ Plot a map of difference of SIC or SoD on a nice map """
@@ -327,21 +356,6 @@ def plot_difference(diff_array, mask_common, land_mask, ax, title, shrink=0.5, f
     cbar.ax.yaxis.set_ticks(np.linspace(-4.5, 2.5, 9), ['land', 'no data'] + list(tick_labels.astype(int)))
     ax.set_title(title)
 
-def plot_sod_map(sod_array, land_mask, ax, title, labels, shrink=0.5):
-    """ Plot SoD map with nice colormaps """
-    map_array = np.array(sod_array)
-    map_array[sod_array < 0] = -2
-    map_array[np.isnan(sod_array)] = -2
-    map_array[land_mask] = -1
-    #cmap_hugo = plt.cm.colors.ListedColormap(['white', '#bbb', '#aa28f0', '#ffff00', '#ca0', '#e54', '#500'])
-    cmap_hugo = plt.cm.colors.ListedColormap(['white', 'gray', '#aa28f0', '#ffff00', '#ca0', '#e54', '#500'])
-
-    im10 = ax.imshow(map_array, interpolation='nearest', cmap=cmap_hugo, clim=[-2, 4])
-    if shrink > 0:
-        cbar = plt.colorbar(im10, ax=ax, shrink=shrink)
-        cbar.ax.yaxis.set_ticks(np.linspace(-1.5, 3.5, 7), ['No Data', 'Land'] + labels)
-    ax.set_title(title)
-
 def plot_sic_map(sic_array, land_mask, ax, title, shrink=0.5):
     """ Plot SIC map with nice colormaps """
     map_array = np.array(sic_array)
@@ -353,6 +367,32 @@ def plot_sic_map(sic_array, land_mask, ax, title, shrink=0.5):
     im10 = ax.imshow(map_array, interpolation='nearest', cmap=sic_cmap, clim=[-2, 100])
     if shrink > 0:
         cbar = plt.colorbar(im10, ax=ax, shrink=shrink)
+    ax.set_title(title)
+
+def plot_sod_map(sod_array, land_mask, ax, title, labels, shrink=0.5):
+    """ Plot SoD map with nice colormaps """
+    map_array = np.array(sod_array)
+    map_array[sod_array < 0] = -2
+    map_array[np.isnan(sod_array)] = -2
+    map_array[land_mask] = -1
+    cmap_hugo = plt.cm.colors.ListedColormap(['white', 'gray', '#aa28f0', '#ffff00', '#ca0', '#e54', '#500'])
+    im10 = ax.imshow(map_array, interpolation='nearest', cmap=cmap_hugo, clim=[-2, 4])
+    if shrink > 0:
+        cbar = plt.colorbar(im10, ax=ax, shrink=shrink)
+        cbar.ax.yaxis.set_ticks(np.linspace(-1.5, 3.5, 7), ['No Data', 'Land'] + labels['sod'])
+    ax.set_title(title)
+
+def plot_flz_map(sod_array, land_mask, ax, title, labels, shrink=0.5):
+    """ Plot FLZ map with nice colormaps """
+    map_array = np.array(sod_array)
+    map_array[sod_array < 0] = -2
+    map_array[np.isnan(sod_array)] = -2
+    map_array[land_mask] = -1
+    cmap_flz = plt.cm.colors.ListedColormap(['white', 'gray', '#229', '#66b', '#88d', '#ddf'])
+    im10 = ax.imshow(map_array, interpolation='nearest', cmap=cmap_flz, clim=[-2, 3])
+    if shrink > 0:
+        cbar = plt.colorbar(im10, ax=ax, shrink=shrink)
+        cbar.ax.yaxis.set_ticks(np.linspace(-1.5, 2.5, 6), ['No Data', 'Land'] + labels['flz'])
     ax.set_title(title)
 
 def compute_sic_stats(man_sic, aut_sic, mask_sic):
@@ -408,16 +448,19 @@ def get_man_file(path):
         sa = ds['SA'][0].astype(int).filled(0)
         sb = ds['SB'][0].astype(int).filled(0)
         sc = ds['SC'][0].astype(int).filled(0)
+        fa = ds['FA'][0].astype(int).filled(0)
+        fb = ds['FB'][0].astype(int).filled(0)
+        fc = ds['FC'][0].astype(int).filled(0)
         ice_poly_id_grid = ds['ice_poly_id_grid'][0, ::-1]
     ct[ct > 90] = 100
-    return ct,ca,sa,cb,sb,cc,sc,ice_poly_id_grid
+    return ct,ca,sa,fa,cb,sb,fb,cc,sc,fc,ice_poly_id_grid
 
-def get_ice_type_fractions_dmi(icecodes, CA, CB, CC, SA, SB, SC):
+def get_ice_type_fractions_dmi(CA, CB, CC, SA, SB, SC):
     """ Convert fractions and SoDs from SIGRID codes to fractions of selected ice types """
-    ice_type_fractions = np.zeros((len(icecodes), 7))
-    ice_type_fractions[range(len(icecodes)), SA] += CA
-    ice_type_fractions[range(len(icecodes)), SB] += CB
-    ice_type_fractions[range(len(icecodes)), SC] += CC
+    ice_type_fractions = np.zeros((len(CA), 7))
+    ice_type_fractions[range(len(CA)), SA] += CA
+    ice_type_fractions[range(len(CA)), SB] += CB
+    ice_type_fractions[range(len(CA)), SC] += CC
     ice_type_fractions[:, 1] = 100 - ice_type_fractions[:, 2:].sum(axis=1)
     return ice_type_fractions
 
@@ -428,24 +471,31 @@ def correct_ca_cb_cc(CT, CA, CB, CC):
     CC[CC == -9] = 0
     return CA, CB, CC
 
-def correct_sa_sb_sc(SA, SB, SC, ice_type_maping):
-    """ Correct SoDs from DMI """
+def convert_sigrid_codes(SA, SB, SC, ice_type_maping):
+    """ Convert SoDs (of FLZ) from DMI ice charts from SIGRID nomenclature
+    to a limited number of ice types (as in DMI pan-arctic) """
     SA_SB_SC = []
     for s in [SA, SB, SC]:
         s[s  == -9] = 99
         SA_SB_SC.append(ice_type_maping[s])
     return SA_SB_SC
 
-def get_sod_sic_maps_dmi(ice_type_fractions, ice_poly_id_grid, ct):
-    """ Convert 2D map of polygon IDs and 1D arrays with SoD fractions and CT
-    into 2D maps of SoD and SIC """
-    sod = np.argmax(ice_type_fractions, axis=1)
+def get_sic_map_dmi(ct, ice_poly_id_grid):
+    """ Convert 2D map of polygon IDs and 1D arrays with CT to 2D maps of SIC """
     ice_poly_id_grid_int = ice_poly_id_grid.filled(0).astype(int)
     sic_map = ct[ice_poly_id_grid_int].astype(float)
     sic_map[ice_poly_id_grid.mask] = np.nan
+    return sic_map
+
+def get_sod_map_dmi(ice_type_fractions, ice_poly_id_grid):
+    """ Convert 2D map of polygon IDs and 1D arrays with SoD (or FSZ) fractions
+    into 2D maps of SoD (or FSZ) """
+    sod = np.argmax(ice_type_fractions, axis=1)
+    ice_poly_id_grid_int = ice_poly_id_grid.filled(0).astype(int)
     sod_map = sod[ice_poly_id_grid_int].astype(float) - 2
     sod_map[ice_poly_id_grid.mask] = np.nan
-    return sod_map, sic_map
+    sod_map[sod_map == -2] = np.nan
+    return sod_map
 
 def reproject(src_crs, src_x, src_y, src_arrays, dst_crs, dst_x, dst_y):
     """ Collocate the predicted DMI ice chart with the reference DMI icechart """

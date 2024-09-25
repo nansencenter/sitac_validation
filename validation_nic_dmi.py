@@ -9,13 +9,15 @@ class Validation_NIC_DMI(ValidationBase):
     products = ['sod', 'sic']
     max_value = {'sod': 4, 'sic': 100}
     dir_auto_format = 'dmi_asip_seaice_mosaic_arc_l3_%Y%m%d.nc'
-    labels = [
-        "Young Ice",
-        "Thin FY Ice",
-        "Thick FY Ice",
-        "Multi-Year Ice",
-        "Glacier Ice",
-    ]
+    labels = {
+        'sod':[
+            "Young Ice",
+            "Thin FY Ice",
+            "Thick FY Ice",
+            "Multi-Year Ice",
+            "Glacier Ice",
+        ]
+    }
     map_label_aut = 'DMI-auto'
     map_label_man = 'NIC-manual'
 
@@ -26,16 +28,17 @@ class Validation_NIC_DMI(ValidationBase):
 
     def get_aut_ice_chart(self, aut_files):
         """ Get averaged predicted ice chart from several input netDCF files """
-        sods, sics =[], []
+        sics, sods, flzs = [], [], []
         for aut_file in aut_files:
-            sod_dmi, sic_dmi, lnd_dmi, xc, yc = read_dmi_ice_chart(aut_file, self.step)
+            sic_dmi, sod_dmi, flz_dmi, lnd_dmi, xc, yc = read_dmi_ice_chart(aut_file, self.step)
             sods.append(sod_dmi)
             sics.append(sic_dmi)
-        sics = np.dstack(sics)
-        sods = np.dstack(sods)
+            flzs.append(flz_dmi)
+        sics, sods, flzs = [np.nanmedian(np.dstack(i), axis=2) for i in [sics, sods, flzs]]
         return {
-            'sod': np.nanmedian(sods, axis=2),
-            'sic': np.nanmedian(sics, axis=2),
+            'sic': sics,
+            'sod': sods,
+            'flz': flzs,
             'landmask': lnd_dmi,
             'xc': xc,
             'yc': yc,
@@ -50,8 +53,8 @@ class Validation_NIC_DMI(ValidationBase):
         }
 
     def save_stats(self, date, man_ice_chart, aut_ice_chart, mask):
-        self.save_sod_stats(date, man_ice_chart, aut_ice_chart, mask)
         self.save_sic_stats(date, man_ice_chart, aut_ice_chart, mask)
+        self.save_sod_stats(date, man_ice_chart, aut_ice_chart, mask, 'sod')
 
     def make_maps(self, date, man_ice_chart, aut_ice_chart, diff, mask):
         self.make_sod_maps(date, man_ice_chart, aut_ice_chart, diff, mask)

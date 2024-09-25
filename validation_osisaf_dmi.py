@@ -40,7 +40,7 @@ class Validation_OSISAF_DMI(Validation_DMI_DMI):
         x_min, x_max, x_size = -3845000, 3745000, 760
         man_x = np.linspace(x_min, x_max, x_size)
 
-        _, sic_dmi, lnd_dmi, xc, yc = read_dmi_ice_chart(aut_files[0], self.step)
+        sic_dmi, _, _, lnd_dmi, xc, yc = read_dmi_ice_chart(aut_files[0], self.step)
 
         dmi_arrays_pro = []
         for dmi_array in [sic_dmi, lnd_dmi]:
